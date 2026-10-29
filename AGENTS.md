@@ -110,9 +110,21 @@ Feito:
   lr 3e-4 → min 3e-5, warmup 400, betas (0.9, 0.95), clip 1.0; eval 20 batches fixos a
   cada 250 steps; ckpt a cada 15 min p/ `ckpt.pt` (atomic + rotação p/ `ckpt-prev.pt`);
   logs em `runs/pt-120m/log.jsonl`; KeyboardInterrupt salva ckpt; `--device` força
-  cpu/cuda (testes travam em CPU de propósito). **A fazer:** (1) benchmark tok/s na GPU
-  p/ calibrar B e estimar a noite; (2) run completo (1 noite, ou fatiado com --resume);
-  (3) conferir val loss estável caindo; (4) `[x] 6.` no roadmap.
+  cpu/cuda (testes travam em CPU de propósito).
+- ✅ **Benchmark + smoke na GPU (2026-10-29, Strata derrubado)** — números REAIS, medidos:
+  `runs/smoke-120m` (B16×accum16, 44 steps): loss 9,85→8,12, val 8,63→8,07 (ppl 3186),
+  ckpt+`final/`+`--resume` validados na prática (tokens contínuos, curva sem quebra);
+  VRAM pico **28.531 MiB** de 32.623 (~4 GB livres) → B=32 NÃO cabe.
+  Throughput: **~55k tok/s sem compile** e **~102k tok/s com `--compile`** (quase 2×,
+  medido em `runs/bench-b16-compile`); VRAM com compile cai: B16 **18.8 GiB**, B12 **14.5 GiB**.
+  → run completo = **~14 h sem compile / ~7,5 h com compile** em `runs/pt-120m`.
+  Bugfix encontrado nesse teste: com `--compile` o `named_parameters()` vem como
+  `_orig_mod.*`, então (a) o `embed.weight` caía no grupo COM weight decay e (b) o ckpt
+  salvava chaves prefixadas (resume só com compile). Agora `build_optimizer`/`save_ckpt`/
+  `resume` fazem `getattr(model, "_orig_mod", model)`; coberto por
+  `test_optimizer_com_pesos_de_compile` (**31 testes verdes**).
+  **A fazer:** (1) decidir compile (recomendado: liga, 2× mais rápido e menos VRAM);
+  (2) run completo (`nohup`); (3) conferir val loss estável caindo; (4) `[x] 6.` no roadmap.
 
 ## Decisões de treino (Passo 6)
 
@@ -196,6 +208,16 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   treinar; ver "▶️ Se você é uma NOVA sessão" no topo.)
 - Speedup do KV cache em ctx curto (32–64 tokens, CPU) é só ~1,8×; o ganho de 10×+ do
   critério do Passo 7 vem de ctx longo (geração longa) na GPU.
+- **O lr NÃO é gravado no ckpt**: ele é recalculado por `lr_at(step, max_steps)` a cada
+  step. Logo `--resume` tem que usar o **mesmo `--max-steps`** (e mesmo lr/warmup) do
+  início, senão a curva de lr "salta" sem nenhum aviso (foi o que aconteceu num teste
+  manual 40→44). No run real o default vem do `meta.json` e é constante → ok.
+- `--compile` (torch.compile) funciona com o modelo e com `save_pretrained` (o `final/`
+  sai sem prefixo, via `_orig_mod`), e é **mais rápido E mais leve** em VRAM aqui
+  (B16: 18.8 vs 28.5 GiB — fusão de rmsnorm/swiglu reduz ativações); ganho típico 55k→102k
+  tok/s. Formas fixas (B, ctx constantes) → sem recompiles. Pode (e deve) usar
+  `--compile` no run longo; só mantenha a flag IGUAL entre run e `--resume` (agora o
+  ckpt é agnóstico, mas ajuda a não confundir).
 - `train.py` pega `device` automático (cuda se existir) → nesta máquina os testes do
   script **precisam de `--device cpu`** (a GPU está tomada e o teste de resume exige
   determinismo CPU). Estado retomável = `step` + `opt.state_dict` + RNGs (python,

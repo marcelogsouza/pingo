@@ -76,11 +76,13 @@ def make_config(args: argparse.Namespace) -> PingoConfig:
 
 def build_optimizer(model, args) -> torch.optim.AdamW:
     # sem weight decay: RMSNorm (1-D) e embeddings (protege a tabela de tokens)
-    no_decay = {n for n, p in model.named_parameters() if p.ndim < 2 or n == "embed.weight"}
+    # (unwrap `_orig_mod` p/ --compile: senão os nomes vêm como `_orig_mod.embed.weight`)
+    unwrapped = getattr(model, "_orig_mod", model)
+    no_decay = {n for n, p in unwrapped.named_parameters() if p.ndim < 2 or n == "embed.weight"}
     groups = [
-        {"params": [p for n, p in model.named_parameters() if n not in no_decay],
+        {"params": [p for n, p in unwrapped.named_parameters() if n not in no_decay],
          "weight_decay": args.weight_decay},
-        {"params": [p for n, p in model.named_parameters() if n in no_decay],
+        {"params": [p for n, p in unwrapped.named_parameters() if n in no_decay],
          "weight_decay": 0.0},
     ]
     return torch.optim.AdamW(groups, lr=args.lr, betas=(args.beta1, args.beta2))
@@ -114,9 +116,12 @@ def restore_rng(state: dict, np_rng: np.random.Generator) -> None:
 
 
 def save_ckpt(path: Path, model, opt, step: int, args, np_rng) -> None:
+    # se --compile estiver ligado, salva as chaves sem o prefixo `_orig_mod.`
+    # (ckpt idêntico compilado ou não → --resume independe da flag)
+    unwrapped = getattr(model, "_orig_mod", model)
     payload = {
         "step": step,
-        "model": model.state_dict(),
+        "model": unwrapped.state_dict(),
         "opt": opt.state_dict(),
         "rng": rng_states(np_rng),
         "args": vars(args) | {"out": str(args.out)},
@@ -170,7 +175,7 @@ def run(args: argparse.Namespace) -> dict:
         if not ckpt_path.exists():
             raise FileNotFoundError(f"--resume sem {ckpt_path}")
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        model.load_state_dict(ck["model"])
+        getattr(model, "_orig_mod", model).load_state_dict(ck["model"])
         opt.load_state_dict(ck["opt"])
         restore_rng(ck["rng"], np_rng)
         step = ck["step"]

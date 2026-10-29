@@ -83,6 +83,32 @@ def test_optimizer_grupos_de_decay():
         sum(1 for _ in model.parameters())
 
 
+def test_optimizer_com_pesos_de_compile():
+    """`--compile` envolve o modelo: os nomes viram `_orig_mod.*` e o embed/norm
+    cairia no grupo com weight decay se o unwrap for esquecido (regressão)."""
+    model = train.PingoLM(PingoConfig(hidden_size=32, num_hidden_layers=1,
+                                      num_attention_heads=4, intermediate_size=64))
+
+    class Wrapper(torch.nn.Module):  # imita o que torch.compile faz com _orig_mod
+        def __init__(self, m):
+            super().__init__()
+            self._orig_mod = m
+
+        def forward(self, *a, **kw):
+            return self._orig_mod(*a, **kw)
+
+    wrapped = Wrapper(model)
+    assert any(n.startswith("_orig_mod.") for n, _ in wrapped.named_parameters())
+    args = train.parse_args([])
+    g_decay, g_nodecay = train.build_optimizer(wrapped, args).param_groups
+    ids_nodecay = {id(p) for p in g_nodecay["params"]}
+    for p in (model.embed.weight, model.norm.weight,
+              model.blocks[0].norm_attn.weight, model.blocks[0].norm_mlp.weight):
+        assert id(p) in ids_nodecay, "norm/embedding sem decay mesmo com compile"
+    assert len(g_decay["params"]) + len(g_nodecay["params"]) == \
+        sum(1 for _ in model.parameters())
+
+
 # ---------------------------------------------------------------- resume
 
 def test_resume_reproduz_run_contínuo(tokens_dir, tmp_path):
