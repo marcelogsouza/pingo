@@ -1,0 +1,22 @@
+# dados e artefatos (fora do git, conforme o plano)
+data/
+tokenizer/
+checkpoints/
+runs/
+wandb/
+
+# python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+# obs: uv.lock é versionado de propósito (reprodutibilidade na máquina de treino)
+
+# artefatos de treino/inferência
+*.bin
+*.safetensors
+*.pt
+
+# system
+.DS_Store
