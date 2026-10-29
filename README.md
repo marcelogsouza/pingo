@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Pingo — LLM em português do Brasil" width="320"/>
+</p>
+
 # 🐦 Pingo
 
 **Uma LLM do zero, em português.**
