@@ -1,0 +1,33 @@
+[project]
+name = "pingo"
+version = "0.1.0"
+description = "Pingo: LLM decoder-only pt-BR do zero (Fase 1: Pingo-120M)"
+readme = "README.md"
+authors = [
+    { name = "Marcelo Souza", email = "marcelo.gomes.souza@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.1.0",
+    "numpy>=2.5.4",
+    "pyarrow>=26.0.0",
+    "tokenizers>=0.23.3",
+    "torch>=2.15.0",
+    "tqdm>=4.70.1",
+    "transformers>=5.22.0",
+    "zstandard>=0.25.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+# layout flat: pacote pingo/ na raiz (conforme o PLAN.md), não src/
+[tool.uv.build-backend]
+module-root = ""
+module-name = "pingo"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
