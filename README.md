@@ -86,7 +86,7 @@ completo, 6 shards). `meta.json` registra contagens/proveniência; `pingo/data.p
 - [x] **2.** Download e limpeza dos dados (Community OSCAR `pt`)
 - [x] **3.** Treinamento do tokenizer BPE (16k) — byte-level, **4,09 chars/token** no val (GPT-2: 2,69)
 - [x] **4.** Tokenização → shards binários train/val (uint16, memmap)
-- [ ] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários
+- [x] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários — **127.555.456 params**, equivalência do cache `<1e-5`, overfit→0, roundtrip HF
 - [ ] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis)
 - [ ] **7.** Geração de texto + perplexidade de validação
 - [ ] 8. Escalar para ~350M

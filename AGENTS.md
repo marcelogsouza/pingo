@@ -10,7 +10,7 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 5 de 7 — Modelo: PRÓXIMO.** (Passo 4 concluído em 2026-10-29)
+**Passo 6 de 7 — Pré-treino: PRÓXIMO.** (Passo 5 concluído em 2026-10-29)
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -34,26 +34,37 @@ Feito:
   `meta.json` com contagens; loader memmap `pingo/data.py` (`load_tokens`/`get_batch`,
   alvo = entrada deslocada de 1). `tests/test_data.py` (5 testes, incl. integração com os
   shards reais) verde. Decisão cumprida: dos ~15B tokens do corpus, amostramos a meta 2,5–3B.
+- ✅ **Passo 5 (modelo)**: `pingo/{config,model,cache,generate}.py` + `tests/test_model.py`
+  (16 testes; suíte completa **26 verdes** em CPU, config tiny). Implementado: RMSNorm
+  pré-norm (estatística em fp32), RoPE θ=10k clássico em Q/K (`inv_freq` on-the-fly, sem
+  buffer), MHA causal via `F.scaled_dot_product_attention`, SwiGLU, lineares sem viés,
+  init `normal(0,0.02)` + escala `1/√(2L)` em `o_proj`/`down_proj` (flag `_residual_proj`),
+  tied embeddings, `PingoLM(PreTrainedModel)` com `_tied_weights_keys` (HF v5).
+  `PingoCache`: buffers pré-alocados `[B,H,max_seq,D]` por camada alocados no 1º update,
+  escrita em `cur_len` + `commit()` no fim do forward; pós-prefill só step de 1 token
+  (ValueError claro). `generate()`: greedy/temperature/top-k/top-p, batch=1, para no ctx.
+  **Critérios atingidos:** params exatos **127.555.456** (== alvo ~127,6M); equivalência
+  KV cache `< 1e-5` fp32 (prefill-idêntico e prefill-parcial+steps token-a-token); overfit
+  8×24 → loss < 0.05; roundtrip `save_pretrained`/`from_pretrained` bit-exato nos pesos.
+  Sanidade no Pingo-120M real em CPU fp32: forward B2×1024 ok (1,8 s, loss 8,14 ≈ ln V);
+  benchmark GPU de geração fica p/ Passo 7 (GPU tomada pelo Strata hoje).
 
-A fazer no **Passo 5 (modelo)** — testes unitários em CPU/MPS com config tiny:
-1. `pingo/config.py`: `PingoConfig(PretrainedConfig)` (12L/896d/14h, SwiGLU 2304, ctx 2048,
-   vocab 16.384, head_dim 64, RoPE θ=10k, tied embeddings).
-2. `pingo/model.py`: RMSNorm (pré-norm), RoPE em Q/K, MHA causal via
-   `F.scaled_dot_product_attention`, SwiGLU, init `normal(0,0.02)` + escala `1/√(2L)` nas
-   residuais, lineares sem viés.
-3. `pingo/cache.py`: `PingoCache` com buffers pré-alocados `[B,H,max_seq,D]` por camada,
-   escrita incremental.
-4. `pingo/generate.py`: sampling greedy/temperature/top-k/top-p aproveitando o cache.
-5. `tests/test_model.py`: **contagem esperada ≈127,6M** (14,7M embeddings tied + 12×9,4M de
-   blocos: attn 4·896² + SwiGLU 3·896·2304 + 2 RMSNorm, vocab 16.384); **equivalência do KV
-   cache `max|logits_full − logits_cached| < 1e-5` em fp32**; overfit de batch pequeno → loss≈0.
-6. Marcar `[x] 5.` no roadmap do README; commit `step 5: modelo ...`.
+A fazer no **Passo 6 (pré-treino)** — `scripts/train.py`:
+1. AdamW wd 0.1 **sem decay em RMSNorm/embedding**; warmup linear + cosine p/ lr final;
+   grad clip 1.0; autocast **bf16**; seed fixa.
+2. Batch global **~0.5M tokens** (micro-batch B×2048 na RTX + grad accumulation) →
+   ~5.000–5.500 steps p/ 2,75B tokens. Medir tok/s e ajustar B.
+3. Checkpoints a cada ~15 min: modelo + otimizador + scheduler + RNG (torch/py/np) +
+   passo global; `--resume` reproduzindo a curva (testar: 2 runs fatiados == 1 contínuo).
+4. Log JSONL (loss, val loss/pplx periódico, lr, tok/s; tensorboard opcional).
+5. Dry-run ~30 min (config tiny ou poucos steps) → run completo na RTX (janela de noite,
+   retomável; **parar o Strata antes**, ele toma os 32 GB de VRAM).
+6. Marcar `[x] 6.` no roadmap; commit `step 6: ...`.
 
 ## Próximos passos (do PLAN.md)
 
 | Passo | O que | Arquivos | Critério |
 |---|---|---|---|
-| **5** | Modelo do zero: RMSNorm, RoPE (θ=10k), MHA causal (`F.scaled_dot_product_attention`), SwiGLU, `PingoCache` KV, `PingoLM(PreTrainedModel)` | `pingo/{config,model,cache,generate}.py` | params ≈ alvo (120M: 12L/896d/14h); KV cache equiv `<1e-5` fp32; overfit loss≈0 |
 | **6** | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | val loss estável; resume reproduz a curva |
 | **7** | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | texto pt coerente; 10× mais rápido c/ KV cache |
 
@@ -69,6 +80,9 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   máquina RTX** (ambos gitignored → na M4 os testes de integração pulam). Nela o login HF
   já está feito (`marcelogsouza`) e o gate do Community OSCAR já foi aceito — download não
   precisa de setup.
+- **Antes de usar a GPU (treino, bench, sanity em CUDA): AVISAR o usuário primeiro** —
+  ela roda o servidor de inferência Strata (~31 GB dos 32 GB de VRAM) e é ele que precisa
+  ser desligado. Nunca tomar a GPU por conta própria; conferir com `nvidia-smi`.
 - Testes antes de fechar qualquer passo: `uv run pytest`.
 
 ## Gotchas já descobertos
@@ -99,3 +113,20 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 - `prepare_tokens.py`: tokenização em lote com `n_process=8` (HF) ≈ 215M tokens/min
   (por-doc = 4 MB/s, evitar). O orçamento de tokens estoura em ~1 batch de flush
   (`--flush-chars` 10M ≈ 2,4M tokens) — irrelevante p/ 2,75B.
+- **transformers v5 + modelo próprio:** (a) tied weights exigem declarar
+  `_tied_weights_keys = {"lm_head.weight": "embed.weight"}` na classe, senão
+  `save_pretrained` erro "shared tensors not properly defined"; (b) `from_pretrained`
+  constrói o modelo sob meta-device e **materializa buffers non-persistent uninitialized**
+  (o `inv_freq` do RoPE voltava lixo → logits errados com pesos bit-exatos) — por isso
+  `RoPE.inv_freq()` é calculado sob demanda, sem buffer; (c) `post_init()` chama
+  `_init_weights` em CADA módulo — o init custom (0.02 + escala residual via flag
+  `_residual_proj`) vive ali, não no `__init__`.
+- `torch.Tensor.ones_()` não existe — usar `fill_(1.0)` (pegadinha ao escrever `_init_weights`).
+- `PingoCache`: todas as camadas de um forward escrevem em `cur_len` (o avanço é único,
+  `commit()` no fim do forward — se cada camada incrementasse, a camada 2 escreveria
+  deslocado); pós-prefill só step de 1 token (t>1 com cache não-vazio precisaria de mask).
+  Cache é inferência (`no_grad`): a cópia p/ buffer pré-alocado não propaga gradiente.
+- O Strata segura ~31,4 GB dos 32 GB de **VRAM** também (não só a RAM) → qualquer sanity
+  GPU (forward 120M, bench de geração) precisa dele parado. Checar `nvidia-smi` antes.
+- Speedup do KV cache em ctx curto (32–64 tokens, CPU) é só ~1,8×; o ganho de 10×+ do
+  critério do Passo 7 vem de ctx longo (geração longa) na GPU.
