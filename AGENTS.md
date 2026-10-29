@@ -10,7 +10,7 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 2 de 7 — Dados: EM ANDAMENTO.**
+**Passo 2 de 7 — Dados: quase lá.** (download 100% concluído; filtro/parquet rodando)
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -19,17 +19,19 @@ Feito:
   `data/raw/*.parquet`, ~2% marcado `val`, stats em `data/raw/stats.json`).
 - ✅ Proveniência dos dados documentada no README (repo/dump/arquivos) + wrappers
   `scripts/download_data.sh` / `.bat`.
+- ✅ **Download completo**: 100/100 parts de `2024-10` em `data/2024-10/pt/` (42,7 GB,
+  sizes validados contra o repo). Verificar: `ls data/2024-10/pt/*.jsonl.zst | wc -l` = 100.
 
 Pendente (nesta ordem):
-1. **Esperar o download terminar** — dump `2024-10`, 100 parts em `data/2024-10/pt/`
-   (~42,7 GB). Estado: `ls data/2024-10/pt/*.jsonl.zst | wc -l` (completo = 100, sem `.part`).
-   Se paramos no meio, retomar é trivial: `uv run python scripts/download_data.py`.
-2. **Rodar o processamento completo**: `uv run python scripts/process_data.py --dumps 2024-10`
-   (idempotente; part_1 já processado é pulado). Conferir `data/raw/stats.json`.
-3. **Critério de aceite do Passo 2** (do PLAN.md): amostras inspecionadas + contagem de
-   docs/tokens registrada. Aproveitamento medido no part_1: ~64% dos docs passam.
-   Meta: ~2,5–3B tokens brutos (estimativa ~4 chars/token; tokenização real vem no Passo 3).
-4. Marcar `[x] 2.` no roadmap do README e commitar `step 2: dados ...`.
+1. **Aguardar `process_data.py` completo** (rodando em background, log em `data/process.log`;
+   idempotente — retomar é só rodar de novo). Parquet final: 100 arquivos
+   `data/raw/2024-10-pt_part_N.parquet`.
+2. **Critério de aceite do Passo 2** (do PLAN.md): conferir `data/raw/stats.json`
+   (docs/tokens registrados — smoke do part_1: ~64% de aproveitamento) + inspecionar amostras.
+   Meta: ~2,5–3B tokens brutos. ⚠️ Projeção inicial com só o dump 2024-10 é **1,5–2,7B
+   tokens** → se ficar abaixo, baixar o dump reserva **`2023-40`** (68 parts, ~41,8 GB):
+   `uv run python scripts/download_data.py --dumps 2023-40 --max-gb 45`.
+3. Marcar `[x] 2.` no roadmap do README e commitar `step 2: dados ...`.
    **Nunca dar push sem o usuário revisar o diff antes.**
 
 ## Próximos passos (do PLAN.md)
