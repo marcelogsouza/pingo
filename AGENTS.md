@@ -10,29 +10,28 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 2 de 7 — Dados: quase lá.** (download 100% concluído; filtro/parquet rodando)
+**Passo 3 de 7 — Tokenizer: PRÓXIMO.** (Passo 2 concluído em 2026-10-29)
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
-- ✅ Scripts do Passo 2: `scripts/download_data.py` (download retomável via HTTP Range,
-  4 workers, orçamento de GB) e `scripts/process_data.py` (content → filtros de qualidade →
-  `data/raw/*.parquet`, ~2% marcado `val`, stats em `data/raw/stats.json`).
-- ✅ Proveniência dos dados documentada no README (repo/dump/arquivos) + wrappers
-  `scripts/download_data.sh` / `.bat`.
-- ✅ **Download completo**: 100/100 parts de `2024-10` em `data/2024-10/pt/` (42,7 GB,
-  sizes validados contra o repo). Verificar: `ls data/2024-10/pt/*.jsonl.zst | wc -l` = 100.
+- ✅ **Passo 2 (dados)**: 100/100 parts de `2024-10` baixadas (`data/2024-10/pt/`, 42,7 GB);
+  `process_data.py` rodado completo → 19,3M docs → **10,7M aprovados (55,6%)** com
+  1,9M dups exatos removidos; **59,7B chars ≈ ~15B tokens** (folga de 6× sobre a meta de
+  2,5–3B → dump reserva `2023-40` NÃO será necessário). Parquet: 23 GB em `data/raw/`
+  (colunas `id, content, url, dump, part, split`, ~2% `val`); stats em `data/raw/stats.json`.
+  Amostras inspecionadas: pt real (ocasional pt-PT, aceitável por decisão do plano).
 
-Pendente (nesta ordem):
-1. **Aguardar `process_data.py` completo** (rodando em background, log em `data/process.log`;
-   idempotente — retomar é só rodar de novo). Parquet final: 100 arquivos
-   `data/raw/2024-10-pt_part_N.parquet`.
-2. **Critério de aceite do Passo 2** (do PLAN.md): conferir `data/raw/stats.json`
-   (docs/tokens registrados — smoke do part_1: ~64% de aproveitamento) + inspecionar amostras.
-   Meta: ~2,5–3B tokens brutos. ⚠️ Projeção inicial com só o dump 2024-10 é **1,5–2,7B
-   tokens** → se ficar abaixo, baixar o dump reserva **`2023-40`** (68 parts, ~41,8 GB):
-   `uv run python scripts/download_data.py --dumps 2023-40 --max-gb 45`.
-3. Marcar `[x] 2.` no roadmap do README e commitar `step 2: dados ...`.
-   **Nunca dar push sem o usuário revisar o diff antes.**
+A fazer no **Passo 3 (tokenizer)**:
+1. Criar `scripts/train_tokenizer.py`: BPE **byte-level, vocab 16k** (lib `tokenizers`),
+   treinado em amostra de ~1 GB dos parquets (`split=train`!), especiais
+   `<|bos|> <|eos|> <|pad|>`. Salvar em `tokenizer/` (gitignored).
+2. **Critério de aceite**: taxa chars/token registrada e comparada com GPT-2 em texto pt
+   (guardar o número em `tokenizer/vocab_stats.json` ou similar + no AGENTS.md).
+3. Marcar `[x] 3.` no roadmap do README; commit `step 3: tokenizer ...`.
+
+Decisão pendente do Passo 4 que já podemos tomar: com ~15B tokens disponíveis e meta de
+2,5–3B, o `prepare_tokens.py` deve **amostrar** o corpus (ex.: subset de docs até atingir
+N tokens; manter o `val.bin` completo dos docs `split=val` para medir perplexidade estável).
 
 ## Próximos passos (do PLAN.md)
 
@@ -63,3 +62,7 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 - Paths do repo HF já começam com `data/` → cuidado com caminho duplicado ao compor.
 - `Path("x.jsonl.zst").stem` = `x.jsonl` (só um sufixo); usar `name.removesuffix(".jsonl.zst")`.
 - HF hub 2.x CLI: `uv run hf auth whoami` (não é `hf whoami`).
+- `pt_part_N` não tem tamanho uniforme: muitas parts têm ~10 MB (não ~427 MB); validar por
+  tamanho real, nunca assumir média. Taxa de dup exacto no corpus: ~10%.
+- Disco: `data/` ocupa ~63 GB (40 raw + 23 parquet). Para o Passo 4 pode-se apagar os
+  `.jsonl.zst` depois dos parquets conferidos (re-baixável a qualquer momento).

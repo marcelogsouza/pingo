@@ -49,6 +49,11 @@ O pt-BR domina naturalmente o corpus; não tentamos separar variantes. Filtros d
 locais (comprimento do doc, ratio de linhas curtas, ratio de símbolos, dedup exato) seguram
 ~2% dos documentos para validação.
 
+**Resultado do processamento (dump 2024-10):** 19,3M docs → **10,7M aprovados (55,6%)**,
+com 1,9M duplicados exatos removidos; **59,7B caracteres** (≈15B tokens estimados — folga de
+6× sobre a meta de 2,5B da Fase 1, o dump reserva `2023-40` não será necessário). Parquet
+filtrado: 23 GB em `data/raw/`. Números completos em `data/raw/stats.json`.
+
 Para reproduzir numa máquina nova (download retomável, pode rodar em partes):
 
 ```bash
@@ -61,8 +66,8 @@ treino ficar simples e rápido.
 
 ## Roadmap
 
-- [ ] **1.** Setup do projeto com `uv`
-- [ ] **2.** Download e limpeza dos dados (Community OSCAR `pt`)
+- [x] **1.** Setup do projeto com `uv`
+- [x] **2.** Download e limpeza dos dados (Community OSCAR `pt`)
 - [ ] **3.** Treinamento do tokenizer BPE (16k)
 - [ ] **4.** Tokenização → shards binários train/val
 - [ ] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários
