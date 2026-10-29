@@ -51,6 +51,8 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 - Commits: mensagem `step N: ...` (ver `git log`); **push só após revisão do usuário**.
 - `data/`, `tokenizer/`, `*.parquet`, `*.bin` são gitignored; `uv.lock` é versionado.
 - Máquinas: dev/testes na M4 local (CPU/MPS, config tiny); treino na RTX PRO 4500 32 GB.
+  **Os dados (`data/`, ~63 GB) estão nesta máquina RTX.** Nela o login HF já está feito
+  (`marcelogsouza`) e o gate do Community OSCAR já foi aceito — download não precisa de setup.
 - Testes antes de fechar qualquer passo: `uv run pytest`.
 
 ## Gotchas já descobertos
