@@ -64,11 +64,18 @@ uv run hf auth login        # token HF; aceite o gate do dataset na página dele
 Validação segurada e binarização estilo nanoGPT (shards `.bin` com mmap) para o loop de
 treino ficar simples e rápido.
 
+## Tokenizer
+
+BPE **byte-level** (vocab **16.384**, regex estilo GPT-2 + byte fallback), treinado em amostra
+de 1 GB do `split=train` (`scripts/train_tokenizer.py`), especiais `<|bos|> <|eos|> <|pad|>`.
+No val segurado (5M chars): **4,09 chars/token** vs 2,69 do GPT-2 → **34% menos tokens** em
+pt. Artefatos em `tokenizer/` (fora do git), métricas em `tokenizer/vocab_stats.json`.
+
 ## Roadmap
 
 - [x] **1.** Setup do projeto com `uv`
 - [x] **2.** Download e limpeza dos dados (Community OSCAR `pt`)
-- [ ] **3.** Treinamento do tokenizer BPE (16k)
+- [x] **3.** Treinamento do tokenizer BPE (16k) — byte-level, **4,09 chars/token** no val (GPT-2: 2,69)
 - [ ] **4.** Tokenização → shards binários train/val
 - [ ] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários
 - [ ] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis)
