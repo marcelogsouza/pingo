@@ -44,8 +44,9 @@ A fazer no **Passo 5 (modelo)** — testes unitários em CPU/MPS com config tiny
 3. `pingo/cache.py`: `PingoCache` com buffers pré-alocados `[B,H,max_seq,D]` por camada,
    escrita incremental.
 4. `pingo/generate.py`: sampling greedy/temperature/top-k/top-p aproveitando o cache.
-5. `tests/test_model.py`: params ≈125M (config 120M default); **equivalência do KV cache
-   `max|logits_full − logits_cached| < 1e-5` em fp32**; overfit de batch pequeno → loss≈0.
+5. `tests/test_model.py`: **contagem esperada ≈127,6M** (14,7M embeddings tied + 12×9,4M de
+   blocos: attn 4·896² + SwiGLU 3·896·2304 + 2 RMSNorm, vocab 16.384); **equivalência do KV
+   cache `max|logits_full − logits_cached| < 1e-5` em fp32**; overfit de batch pequeno → loss≈0.
 6. Marcar `[x] 5.` no roadmap do README; commit `step 5: modelo ...`.
 
 ## Próximos passos (do PLAN.md)
@@ -64,8 +65,10 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 - Commits: mensagem `step N: ...` (ver `git log`); **push só após revisão do usuário**.
 - `data/`, `tokenizer/`, `*.parquet`, `*.bin` são gitignored; `uv.lock` é versionado.
 - Máquinas: dev/testes na M4 local (CPU/MPS, config tiny); treino na RTX PRO 4500 32 GB.
-  **Os dados (`data/`, ~63 GB) estão nesta máquina RTX.** Nela o login HF já está feito
-  (`marcelogsouza`) e o gate do Community OSCAR já foi aceito — download não precisa de setup.
+  **Os dados (`data/`, ~69 GB: raw + parquet + `tokens/`) e o `tokenizer/` estão nesta
+  máquina RTX** (ambos gitignored → na M4 os testes de integração pulam). Nela o login HF
+  já está feito (`marcelogsouza`) e o gate do Community OSCAR já foi aceito — download não
+  precisa de setup.
 - Testes antes de fechar qualquer passo: `uv run pytest`.
 
 ## Gotchas já descobertos
@@ -79,8 +82,9 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 - HF hub 2.x CLI: `uv run hf auth whoami` (não é `hf whoami`).
 - `pt_part_N` não tem tamanho uniforme: muitas parts têm ~10 MB (não ~427 MB); validar por
   tamanho real, nunca assumir média. Taxa de dup exacto no corpus: ~10%.
-- Disco: `data/` ocupa ~63 GB (40 raw + 23 parquet). Para o Passo 4 pode-se apagar os
-  `.jsonl.zst` depois dos parquets conferidos (re-baixável a qualquer momento).
+- Disco: `data/` ocupa ~69 GB (40 `.jsonl.zst` + 23 parquet + 6,1 tokens). Os parquets e os
+  `.bin` estão conferidos (Passos 2–4 rodados e testados) → **apagar os `.jsonl.zst` já é
+  seguro** (tudo está tokenizado em `data/tokens/`; e são re-baixáveis a qualquer momento).
 - `tokenizers` 0.23: `BpeTrainer` **não aceita** `workers`/`chunk_size` (paralelismo é interno;
   kwarg desconhecido só avisa e é ignorado); `initial_alphabet` é só no trainer, não no
   construtor de `models.BPE`; contagem via `get_vocab_size()` (não `.vocab_size`).
