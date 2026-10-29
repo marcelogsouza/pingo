@@ -11,7 +11,57 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 ## Onde estamos
 
 **Passo 6 de 7 — Pré-treino: EM ANDAMENTO** (script + testes prontos e verdes em CPU;
-falta timing na GPU e o run completo — aguardando o usuário desligar o Strata).
+faltam timing na GPU e o run completo — a GPU será liberada: Strata derrubado e Opencode
+migrado para modelo na nuvem).
+
+### ▶️ Se você é uma NOVA sessão (Opencode na nuvem, GPU agora livre) — siga nesta ordem
+
+1. **Sanity sem GPU** (não precisa do Strata): `uv run pytest -q` → **30 verdes** esperados.
+2. **Confira a GPU livre**: `nvidia-smi` (com o Strata derrubado deve mostrar ~0 MiB usados;
+   se vir ~31 GB ocupados, o Strata ainda está de pé — AVISE o usuário antes de qualquer
+   coisa em CUDA, regra de ouro do projeto).
+3. **Benchmark do micro-batch** (~2–3 min por config; compare `toks_s` no log de cada uma;
+   monitore VRAM com `nvidia-smi` em outro terminal):
+   ```bash
+   uv run python scripts/train.py --batch-size 16 --accum-steps 16 --max-steps 40 \
+       --eval-steps 999 --ckpt-min 999999 --out runs/bench-b16
+   uv run python scripts/train.py --batch-size 32 --accum-steps 8 --max-steps 40 \
+       --eval-steps 999 --ckpt-min 999999 --out runs/bench-b32
+   ```
+   Escolha o maior B que rodar folgado (deixar >4 GB livres) e mantenha o batch GLOBAL em
+   512 sequences (B×accum=512, ou seja 524k tok/step — não mude isso sem recompensar lr).
+4. **Smoke do 120M real** (~10–15 min):
+   ```bash
+   uv run python scripts/train.py --max-steps 150 --out runs/smoke-120m --log-steps 10 --eval-steps 75
+   ```
+   A loss deve sair de ~9,7 (ln 16384) caindo de forma limpa (sem NaN/spikes); `final/`
+   deve aparecer em `runs/smoke-120m/`.
+5. **Run completo** (~5.248 steps; lance ASSIM, com `nohup`, para sobreviver ao fim da
+   sessão do agente):
+   ```bash
+   mkdir -p runs/pt-120m
+   nohup uv run python scripts/train.py > runs/pt-120m/train.out 2>&1 &
+   tail -n 20 runs/pt-120m/log.jsonl        # acompanhar depois (linhas train_loss/val_loss)
+   ```
+   Estimativa: plano previa ~60–80M tok/s na RTX PRO 4500 → 10–13 h; se não couber numa
+   noite, deixe os ckpts de 15 min e na noite seguinte rode
+   `uv run python scripts/train.py --resume` (mesmos args default; a curva continua
+   idêntica — testado bit-exato). **Nunca rode o run completo sem `--resume` se
+   `runs/pt-120m/ckpt.pt` existe** (recomeçaria do zero e sobrescreveria).
+6. **Critérios para fechar o Passo 6** (da PLAN.md): val loss caindo de forma estável
+   (esperado: ~9,7 no início; ordem de ~3,2–3,9 no fim com 2,75B tokens; ppl do val fica
+   alta em absoluto — ruído do OSCAR, é régua relativa); checkpoint `--resume` já validado
+   em teste unitário; se quiser provar na prática: Ctrl-C no meio, `--resume`, a curva
+   continua sem descontinuidade.
+7. **Fechar**: marcar `[x] 6.` no roadmap do README, atualizar AGENTS.md (estado real:
+   steps rodados, tok/s medido, val loss final), commit `step 6: pré-treino ...`.
+   Passo 7 (`scripts/sample.py`): perplexidade no val + geração (`pingo/generate.py` já
+   existe e é testado) + benchmark 10× KV cache (agora possível com a GPU livre).
+
+Vals de referência para não entrar em pânico: init = 9,71; NaN → cortar lr pela metade
+(lr 1,5e-4) e re-começar do zero (run novo, sem ckpt); OOM → baixar B e subir accum na
+mesma proporção. Disco: cada ckpt.pt ≈ 2,2 GB (modelo+otimizador), rotação mantém 2
+(`ckpt.pt` + `ckpt-prev.pt`); `df -h` antes do run.
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -93,8 +143,10 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   já está feito (`marcelogsouza`) e o gate do Community OSCAR já foi aceito — download não
   precisa de setup.
 - **Antes de usar a GPU (treino, bench, sanity em CUDA): AVISAR o usuário primeiro** —
-  ela roda o servidor de inferência Strata (~31 GB dos 32 GB de VRAM) e é ele que precisa
-  ser desligado. Nunca tomar a GPU por conta própria; conferir com `nvidia-smi`.
+  a RTX roda o servidor de inferência Strata (~31 GB dos 32 GB de VRAM; e até 2026-10-29
+  era ELE que servia o próprio modelo do Opencode). Para liberar a GPU o usuário muda o
+  Opencode para um modelo na nuvem (sessão nova) e derruba o Strata. Nunca tomar a GPU
+  por conta própria; conferir com `nvidia-smi` (se mostra ~31 GB usados, Strata de pé).
 - Testes antes de fechar qualquer passo: `uv run pytest`.
 
 ## Gotchas já descobertos
@@ -139,7 +191,9 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   deslocado); pós-prefill só step de 1 token (t>1 com cache não-vazio precisaria de mask).
   Cache é inferência (`no_grad`): a cópia p/ buffer pré-alocado não propaga gradiente.
 - O Strata segura ~31,4 GB dos 32 GB de **VRAM** também (não só a RAM) → qualquer sanity
-  GPU (forward 120M, bench de geração) precisa dele parado. Checar `nvidia-smi` antes.
+  GPU (forward 120M, bench de geração, treino) precisa dele parado. Checar `nvidia-smi`
+  antes de CUDA. (Desde 2026-10-29 o fluxo é: Opencode na nuvem + Strata derrubado p/
+  treinar; ver "▶️ Se você é uma NOVA sessão" no topo.)
 - Speedup do KV cache em ctx curto (32–64 tokens, CPU) é só ~1,8×; o ganho de 10×+ do
   critério do Passo 7 vem de ctx longo (geração longa) na GPU.
 - `train.py` pega `device` automático (cuda se existir) → nesta máquina os testes do
