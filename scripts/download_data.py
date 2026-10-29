@@ -50,7 +50,6 @@ def download(url: str, dest: Path, expected: int, token: str, retries: int = 5) 
     part = dest.with_suffix(dest.suffix + ".part")
     part.parent.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": f"Bearer {token}"}
-    downloaded_now = 0
 
     for attempt in range(1, retries + 1):
         resume_from = part.stat().st_size if part.exists() else 0
@@ -65,7 +64,7 @@ def download(url: str, dest: Path, expected: int, token: str, retries: int = 5) 
                 shutil.copyfileobj(resp, fh, length=8 * 2**20)
             if part.stat().st_size == expected:
                 part.rename(dest)
-                return downloaded_now
+                return expected - resume_from  # bytes baixados nesta chamada
             # tamanho errado: descarta e tenta do zero
             part.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001 — rede: retry com backoff

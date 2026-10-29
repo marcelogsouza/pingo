@@ -34,10 +34,30 @@ Configs previstas:
 
 ## Os dados
 
-Pré-treino em português com o [Community OSCAR](https://huggingface.co/datasets/oscar-corpus/community-oscar)
-(Common Crawl filtrado por idioma). O pt-BR domina naturalmente o corpus; não tentamos
-separar variantes. Validação segurada, filtros de qualidade e binarização estilo nanoGPT
-(shards `.bin` com mmap) para o loop de treino ficar simples e rápido.
+Pré-treino em português com o **Common Crawl filtrado por idioma** do Hugging Face. Registro
+exato de onde vêm os dados (para qualquer pessoa reproduzir do zero):
+
+| | |
+|---|---|
+| Dataset | [`oscar-corpus/community-oscar`](https://huggingface.co/datasets/oscar-corpus/community-oscar) — *gated* com gate automático: basta aceitar os termos 1× na página com uma conta HF |
+| Dump usado | **`2024-10`** — o dump mais recente que traz o idioma `pt` (os dumps mais novos só publicam os metadados de `pt`) |
+| Arquivos | `data/2024-10/pt/pt_part_1..100.jsonl.zst` — 100 shards independentes, ~42,7 GB (JSONL com `content` + `warc_headers` + `metadata`) |
+| Reserva | dump `2023-40` (68 parts, ~41,8 GB), se a tokenização não alcançar a meta de ~2,5B tokens |
+| Local | `data/<dump>/pt/*.jsonl.zst` (gitignored) → filtrado em `data/raw/*.parquet`; contagens em `data/raw/stats.json` |
+
+O pt-BR domina naturalmente o corpus; não tentamos separar variantes. Filtros de qualidade
+locais (comprimento do doc, ratio de linhas curtas, ratio de símbolos, dedup exato) seguram
+~2% dos documentos para validação.
+
+Para reproduzir numa máquina nova (download retomável, pode rodar em partes):
+
+```bash
+uv run hf auth login        # token HF; aceite o gate do dataset na página dele 1x
+./scripts/download_data.sh  # Windows: scripts\download_data.bat
+```
+
+Validação segurada e binarização estilo nanoGPT (shards `.bin` com mmap) para o loop de
+treino ficar simples e rápido.
 
 ## Roadmap
 
