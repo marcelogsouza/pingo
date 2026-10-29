@@ -10,7 +10,8 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 6 de 7 — Pré-treino: PRÓXIMO.** (Passo 5 concluído em 2026-10-29)
+**Passo 6 de 7 — Pré-treino: EM ANDAMENTO** (script + testes prontos e verdes em CPU;
+falta timing na GPU e o run completo — aguardando o usuário desligar o Strata).
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -48,18 +49,29 @@ Feito:
   8×24 → loss < 0.05; roundtrip `save_pretrained`/`from_pretrained` bit-exato nos pesos.
   Sanidade no Pingo-120M real em CPU fp32: forward B2×1024 ok (1,8 s, loss 8,14 ≈ ln V);
   benchmark GPU de geração fica p/ Passo 7 (GPU tomada pelo Strata hoje).
+- 🔶 **Passo 6 (pré-treino)** — `scripts/train.py` pronto, **testes verdes em CPU**
+  (`tests/test_train.py`, 4 testes; suíte **30 verdes**): lr warmup+cosine ok; AdamW com
+  grupos de decay corretos (sem decay em RMSNorm 1-D + `embed.weight`); **teste central:
+  run contínuo 6 steps == 3 steps + `--resume` até 6 com pesos BIT-EXATOS e mesma val
+  loss** (RNGs python/numpy-Generator/torch salvos no ckpt). Dry-run CLI em CPU com os
+  tokens REAIS (`--tiny --ctx 256`, 20 steps): loss inicial 9,71 ≈ ln 16384, val caindo,
+  `final/` salvo em formato HF. Decisões de default: micro-batch B=16 × ctx 2048 ×
+  accum 16 = **524k tok/step**; max_steps default = época do meta ≈ **5.248 steps**;
+  lr 3e-4 → min 3e-5, warmup 400, betas (0.9, 0.95), clip 1.0; eval 20 batches fixos a
+  cada 250 steps; ckpt a cada 15 min p/ `ckpt.pt` (atomic + rotação p/ `ckpt-prev.pt`);
+  logs em `runs/pt-120m/log.jsonl`; KeyboardInterrupt salva ckpt; `--device` força
+  cpu/cuda (testes travam em CPU de propósito). **A fazer:** (1) benchmark tok/s na GPU
+  p/ calibrar B e estimar a noite; (2) run completo (1 noite, ou fatiado com --resume);
+  (3) conferir val loss estável caindo; (4) `[x] 6.` no roadmap.
 
-A fazer no **Passo 6 (pré-treino)** — `scripts/train.py`:
-1. AdamW wd 0.1 **sem decay em RMSNorm/embedding**; warmup linear + cosine p/ lr final;
-   grad clip 1.0; autocast **bf16**; seed fixa.
-2. Batch global **~0.5M tokens** (micro-batch B×2048 na RTX + grad accumulation) →
-   ~5.000–5.500 steps p/ 2,75B tokens. Medir tok/s e ajustar B.
-3. Checkpoints a cada ~15 min: modelo + otimizador + scheduler + RNG (torch/py/np) +
-   passo global; `--resume` reproduzindo a curva (testar: 2 runs fatiados == 1 contínuo).
-4. Log JSONL (loss, val loss/pplx periódico, lr, tok/s; tensorboard opcional).
-5. Dry-run ~30 min (config tiny ou poucos steps) → run completo na RTX (janela de noite,
-   retomável; **parar o Strata antes**, ele toma os 32 GB de VRAM).
-6. Marcar `[x] 6.` no roadmap; commit `step 6: ...`.
+## Decisões de treino (Passo 6)
+
+- **Sem run de 3 dias**: run cabe em janela de noite (~5,2k steps); se estourar, fatiar
+  com `--resume` (curva idêntica, testada).
+- Amostragem dos batches é **com reposição** (estilo nanoGPT sobre os 2,75B tokens);
+  ~63% dos tokens vistos em média numa época de amostragem — aceitável p/ Fase 1.
+- `--compile` existe mas fica OFF no 1º run (menos móveis p/ diagnosticar); testar depois.
+- Val do OSCAR tem ruído (casino/spam) → ppl absoluta alta é esperado; régua p/ comparar.
 
 ## Próximos passos (do PLAN.md)
 
@@ -130,3 +142,8 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   GPU (forward 120M, bench de geração) precisa dele parado. Checar `nvidia-smi` antes.
 - Speedup do KV cache em ctx curto (32–64 tokens, CPU) é só ~1,8×; o ganho de 10×+ do
   critério do Passo 7 vem de ctx longo (geração longa) na GPU.
+- `train.py` pega `device` automático (cuda se existir) → nesta máquina os testes do
+  script **precisam de `--device cpu`** (a GPU está tomada e o teste de resume exige
+  determinismo CPU). Estado retomável = `step` + `opt.state_dict` + RNGs (python,
+  `np.random.Generator.bit_generator.state`, torch CPU/CUDA) — esquecer um deles e a
+  "curva idêntica" quebra silenciosamente.
