@@ -10,7 +10,7 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 4 de 7 — Binarização: PRÓXIMO.** (Passo 3 concluído em 2026-10-29)
+**Passo 5 de 7 — Modelo: PRÓXIMO.** (Passo 4 concluído em 2026-10-29)
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -27,21 +27,31 @@ Feito:
   no val (5,0M chars) vs 2,69 do GPT-2 → 34,3% menos tokens** (métricas em
   `tokenizer/vocab_stats.json`; top-20 tokens = function words pt, saudável).
   `tests/test_tokenizer.py` cobre especiais, roundtrip, byte-fallback e compressão pt.
+- ✅ **Passo 4 (binarização)**: `scripts/prepare_tokens.py` + `pingo/data.py`. Tokens
+  **train: 2,751B** (2.015.381 docs amostrados do `split=train`, seed 13, 12,8 min) em
+  **2.752 shards** `train-NNNN.bin` de 1M tokens uint16 (docs separados por `<|eos|>` id=1) +
+  **val: 292M** tokens (o `split=val` COMPLETO, 215.042 docs, 6 shards `val-NNNN.bin`).
+  `meta.json` com contagens; loader memmap `pingo/data.py` (`load_tokens`/`get_batch`,
+  alvo = entrada deslocada de 1). `tests/test_data.py` (5 testes, incl. integração com os
+  shards reais) verde. Decisão cumprida: dos ~15B tokens do corpus, amostramos a meta 2,5–3B.
 
-A fazer no **Passo 4 (binarização)**:
-1. Criar `scripts/prepare_tokens.py`: parquet → shards `.bin` **uint16** de ~1M tokens
-   (docs separados por `<|eos|>`), `train-*.bin` + `val.bin`.
-2. Decisão já tomada (era pendente): **amostrar** o corpus train até ~2,5–3B tokens
-   (temos ~15B disponíveis; manter shuffle por arquivo como em `train_tokenizer.py`) e
-   binarizar o `split=val` **completo** (~1,2B chars ≈ ~300M tokens) p/ perplexidade estável.
-3. `pingo/data.py`: loader memmap (`np.memmap`) lendo batches de `[B, ctx+1]` dos shards.
-4. Marcar `[x] 4.` no roadmap do README; commit `step 4: binarização ...`.
+A fazer no **Passo 5 (modelo)** — testes unitários em CPU/MPS com config tiny:
+1. `pingo/config.py`: `PingoConfig(PretrainedConfig)` (12L/896d/14h, SwiGLU 2304, ctx 2048,
+   vocab 16.384, head_dim 64, RoPE θ=10k, tied embeddings).
+2. `pingo/model.py`: RMSNorm (pré-norm), RoPE em Q/K, MHA causal via
+   `F.scaled_dot_product_attention`, SwiGLU, init `normal(0,0.02)` + escala `1/√(2L)` nas
+   residuais, lineares sem viés.
+3. `pingo/cache.py`: `PingoCache` com buffers pré-alocados `[B,H,max_seq,D]` por camada,
+   escrita incremental.
+4. `pingo/generate.py`: sampling greedy/temperature/top-k/top-p aproveitando o cache.
+5. `tests/test_model.py`: params ≈125M (config 120M default); **equivalência do KV cache
+   `max|logits_full − logits_cached| < 1e-5` em fp32**; overfit de batch pequeno → loss≈0.
+6. Marcar `[x] 5.` no roadmap do README; commit `step 5: modelo ...`.
 
 ## Próximos passos (do PLAN.md)
 
 | Passo | O que | Arquivos | Critério |
 |---|---|---|---|
-| **4** | Binarização: parquet → shards `.bin` uint16 (~1M tok) + `val.bin` | `scripts/prepare_tokens.py` | loader memmap (`pingo/data.py`) lê batches |
 | **5** | Modelo do zero: RMSNorm, RoPE (θ=10k), MHA causal (`F.scaled_dot_product_attention`), SwiGLU, `PingoCache` KV, `PingoLM(PreTrainedModel)` | `pingo/{config,model,cache,generate}.py` | params ≈ alvo (120M: 12L/896d/14h); KV cache equiv `<1e-5` fp32; overfit loss≈0 |
 | **6** | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | val loss estável; resume reproduz a curva |
 | **7** | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | texto pt coerente; 10× mais rápido c/ KV cache |
@@ -79,3 +89,9 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   (nunca carregar parquet inteiro); o run do tokenizer picou 3 GB assim.
 - Byte-level BPE: `id_to_token()` mostra bytes como `Ġ`/`Ã©` etc. (mapeamento byte→unicode do
   GPT-2) — é cosmético; `decode()` faz roundtrip exato (coberto em `tests/test_tokenizer.py`).
+- O `split=val` herdou o ruído web do OSCAR (páginas de casino/spam SEO tipo `mostbet`
+  passaram nos filtros de 2024-10) → perplexidade de val sai alta em termos absolutos; serve
+  como régua estável p/ comparar runs. Se incomodar, filtrar val antes do Passo 6.
+- `prepare_tokens.py`: tokenização em lote com `n_process=8` (HF) ≈ 215M tokens/min
+  (por-doc = 4 MB/s, evitar). O orçamento de tokens estoura em ~1 batch de flush
+  (`--flush-chars` 10M ≈ 2,4M tokens) — irrelevante p/ 2,75B.

@@ -71,12 +71,21 @@ de 1 GB do `split=train` (`scripts/train_tokenizer.py`), especiais `<|bos|> <|eo
 No val segurado (5M chars): **4,09 chars/token** vs 2,69 do GPT-2 → **34% menos tokens** em
 pt. Artefatos em `tokenizer/` (fora do git), métricas em `tokenizer/vocab_stats.json`.
 
+## Tokens (shards binários)
+
+`scripts/prepare_tokens.py` aplica o tokenizer aos parquets → **2,75B tokens de treino**
+(2,02M docs amostrados do `split=train`, seed 13) em 2.752 shards `train-NNNN.bin` de 1M
+tokens (uint16, docs separados por `<|eos|>`) + **292M tokens de val** (o `split=val`
+completo, 6 shards). `meta.json` registra contagens/proveniência; `pingo/data.py` lê batches
+`[B, ctx]` via `np.memmap` (alvo = entrada deslocada de 1). ~6,1 GB em `data/tokens/`
+(foras do git).
+
 ## Roadmap
 
 - [x] **1.** Setup do projeto com `uv`
 - [x] **2.** Download e limpeza dos dados (Community OSCAR `pt`)
 - [x] **3.** Treinamento do tokenizer BPE (16k) — byte-level, **4,09 chars/token** no val (GPT-2: 2,69)
-- [ ] **4.** Tokenização → shards binários train/val
+- [x] **4.** Tokenização → shards binários train/val (uint16, memmap)
 - [ ] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários
 - [ ] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis)
 - [ ] **7.** Geração de texto + perplexidade de validação
