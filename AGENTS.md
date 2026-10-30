@@ -11,24 +11,34 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 ## Onde estamos
 
 **Fase 1 CONCLUÍDA (Passos 1–7) — e o PLANO MUDOU: agora é SFT, não o Pingo-350M.**
+**SFT-1 (gerador do dataset) CONCLUÍDO em 2026-10-30** — `scripts/gen_sft.py` + 21 testes;
+pilotos auditados (300 pares, 2 versões) e o volume de **30k pares rodando** em
+`data/sft/sft-v1.jsonl` (retomável com `--resume`).
 
 Decisão do usuário em 2026-10-30: **o Passo 8 (escalar p/ 350M) está suspenso**. A próxima
 etapa é **SFT** (instruction tuning) do Pingo-120M com um dataset de Q&A gerado
 sinteticamente a partir do próprio corpus OSCAR, usando um **modelo professor local**.
+
+### 🔒 O checkpoint do Pingo-120M tem BACKUP (não apague!)
+
+`runs/pt-120m-BACKUP-2026-10-30/` = cópia **read-only** (`dr-xr-xr-x`) de `runs/pt-120m/`
+inteiro (4,8 GB), com `SHA256SUMS.txt` que bate com o original (model.safetensors, ckpt.pt,
+best.pt). Pedido explícito do usuário: **preservar com carinho o modelo que funciona**.
+Nenhum script até agora escreve nesse diretório; `train_sft.py` deve gravar em `runs/sft-*`.
 
 Estado do que existe hoje:
 - Modelo pré-treinado em `runs/pt-120m/final/` (5.248 steps, 2,75B tokens, 7,56 h):
   val loss 2,507 / **ppl 11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente,
   KV cache 10,6–11,8× em serving (B=16). Avaliação reproduzível: `scripts/sample.py`;
   relatório em `runs/pt-120m/eval.json`.
-- **Suíte: 37 testes verdes**, `main` no GitHub, último commit do projeto = Passo 7.
+- **Suíte: 58 testes verdes** (37 dos Passos 1–7 + 21 do gerador SFT), `main` no GitHub.
 - **Professor no ar**: `llama.cpp` (build b11669) na **porta 8001**, modelo
   `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot. (Quem sobe o servidor
   é o usuário; ver a seção SFT abaixo.)
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU**: `uv run pytest -q` → **37 verdes** esperados.
+1. **Sanity sem GPU**: `uv run pytest -q` → **58 verdes** esperados.
 2. **GPU** (`nvidia-smi`): se mostrar ~31 GB usados, o **Strata** está de pé — **AVISE o
    usuário antes de qualquer coisa em CUDA** (regra de ouro). O professor llama.cpp ocupa
    só ~3–4 GB e pode estar rodando junto.
@@ -41,9 +51,12 @@ Estado do que existe hoje:
    lr 3e-4→3e-5, warmup 400, 5.248 steps); ~101k tok/s ⇒ 7,5 h; 18,8 GiB de VRAM.
 5. **Avaliação do base**: `uv run python scripts/sample.py` (ppl + amostras + bench do
    KV cache; `--no-ppl`/`--no-bench` p/ encurtar). 2–3 min na GPU.
-6. **Próxima tarefa (SFT-1)**: escrever `scripts/gen_sft.py` (gerador do dataset) e rodar
-   o **piloto de 100–300 exemplos** para auditoria antes de qualquer volume. Desenho
-   acordado, riscos e decisões pendentes estão na seção **"SFT — rumo novo"** abaixo.
+6. **Estado do SFT**: o gerador (`scripts/gen_sft.py`) está pronto e testado; o volume de
+   30k pares roda em background (~11 h) e é **retomável**:
+   `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume`
+   (não deixe dois escritores no mesmo arquivo). Confira o progresso pela 1ª linha do
+   `data/sft/sft-v1.log` e pelo `wc -l data/sft/sft-v1.jsonl`.
+   **Próxima tarefa: SFT-2** (`scripts/validate_sft.py` — dedup MinHash + split por documento).
 
 ## SFT — rumo novo (decidido em 2026-10-30)
 
@@ -56,7 +69,7 @@ O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco 
 
 | Etapa | O que | Arquivo proposto | Status |
 |---|---|---|---|
-| **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~1200 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ⬜ a fazer |
+| **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~500 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ✅ (30k rodando) |
 | **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ⬜ |
 | **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, packing com `<|end|>`, cosine curto, ckpt | `scripts/train_sft.py` (+ `pingo/model.py`) | ⬜ |
 | **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/sample.py --model <sft>` | ⬜ |
@@ -67,14 +80,15 @@ O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco 
 
 ### Formato do exemplo (JSONL, uma linha por par)
 
-```json
-{"doc_id": "...", "url": "...", "split": "train", "teacher": "Qwen3.5-4B/UD-Q4_K_XL",
- "prompt_version": "v1", "seed": 13, "tipo": "extracao",
- "pergunta": "...", "resposta": "...", "evidencia": "<cópia literal do trecho>"}
-```
+O desenho original ficou em `prompt_version v1`; o formato **em uso** (v2, com modo ancorado)
+está na seção "Formato real do JSONL" abaixo.
 
-Taxonomia de `tipo`: `extracao`, `explicacao`, `resumo` — e ~5% de **recusas**
-("isso não consta no texto") para ensinar honestidade.
+Taxonomia de `tipo`: `extracao` (50%), `explicacao` (30%), `resumo` (15%) — e ~5% de
+**recusas** para ensinar honestidade.
+
+Ganho de graça descoberto no piloto: o próprio professor **veta o trecho** (`status:
+"invalido"`) quando ele não é texto legível em pt — bolsão/menu/spam. Virou o filtro de
+qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
 
 ### Como falar com o professor (llama.cpp :8001) — testado
 
@@ -93,18 +107,36 @@ Taxonomia de `tipo`: `extracao`, `explicacao`, `resumo` — e ~5% de **recusas**
 - **NÃO** rodar nada em CUDA pesado enquanto o professor estiver servindo — o servidor
   precisa da VRAM.
 
-### Decisões ainda pendentes (perguntar ao usuário antes de fechar o gerador)
+### Decisões TOMADAS pelo usuário (2026-10-30) — valem para o SFT
 
-1. **Tokens de chat no nosso tokenizer** (hoje só `<|bos|> <|eos|> <|pad|>`):
-   (A) delimitadores em texto puro (`Pergunta:`/`Resposta:`) ou (B) adicionar
-   `<|user|>/<|assistant|>/<|end|>` → `vocab_size` 16.384→16.387 + `resize_token_embeddings`.
-   **Recomendação: (B)**, com init na média dos embeddings.
-2. **Volume** do dataset depois do piloto (sugestão: 20–50 mil pares).
-3. **Recusas** (~5%) entram ou não.
-4. **Filtro de fonte**: quão agressivo (≥1.500 chars e ≥3 parágrafos já descarta muito lixo,
-   mas também reduz o volume).
-5. **Dataset no repo ou fora** (JSONL de 50k ≈ 50–100 MB → melhor gitignored, com o
-   gerador + sementes versionados).
+1. **Tokens de chat**: **(B) tokens especiais** — adicionar `<|user|>/<|assistant|>/<|end|>` ao
+   tokenizer (`vocab_size` 16.384→16.387, `resize_token_embeddings`, init dos novos na média
+   dos embeddings). Ainda **não implementado**: é tarefa do SFT-3. *(ATENÇÃO: hoje o
+   `tokenizer/tokenizer.json` está com 16.384 — não regerar o tokenizer, só adicionar tokens.)*
+2. **Volume**: **30 mil pares** (`data/sft/sft-v1.jsonl`).
+3. **Recusas**: **sim, ~5%** (`--recusa-frac 0.05`).
+4. **Formato do exemplo: MISTO 50/50** (`--ancorado-frac 0.5`) — metade **ancorada** (o trecho
+   vai junto: uso tipo mini-RAG, e "Isso não consta no texto." faz sentido) e metade **sem
+   contexto** (closed-book: perguntas autossuficientes, recusa = "Não tenho informações
+   suficientes para responder isso."). O campo `ancorado` (bool) do JSONL diz qual é qual;
+   `chunk_text` já é gravado em **todos** os exemplos, então a serialização do treino pode
+   mudar sem regerar nada.
+5. **Dataset**: fora do repo (gitignored, `data/sft/`), gerador + sementes versionados.
+6. **Filtro de fonte**: duro — `min_chars 2000`, `min_paras 4`, dígitos/palavra ≤ 0.25,
+   maiúsculas ≤ 30%, URLs ≤ 4, blocklist de URL/conteúdo (`--deny-url-regex`
+   `/--deny-text-regex`: adulto, pirataria, cassino, "assistir/dublado/legendado") e teto por
+   domínio (5% do volume).
+
+### Formato real do JSONL (v2 — o que o gerador grava)
+
+```json
+{"doc_id","url","split":"train","dump","chunk_idx","chunk_chars","chunk_text",
+ "teacher":"unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL","prompt_version":"v2","seed","attempt",
+ "tipo":"extracao|explicacao|resumo|recusa","ancorado":true|false,
+ "pergunta","resposta","evidencia"}
+```
+
+`evidencia` é **cópia literal** do `chunk_text` (vazia nas recusas) — SFT-2 revalida isso.
 
 ### Gotchas já descobertos com professores locais
 
@@ -115,6 +147,21 @@ Taxonomia de `tipo`: `extracao`, `explicacao`, `resumo` — e ~5% de **recusas**
 - OSCAR é web cru: **spam/casino/SEO** passa nos filtros do pré-treino. Para o SFT o filtro
   de fonte tem que ser mais duro (tamanho, dígitos/palavra, links, boilerplate, parágrafos).
 - Amostrar **de `split=train`** sempre; `val` é a régua do pré-treino e não pode vazar.
+- **Desempenho medido do professor (2026-10-30, 8 slots, Qwen3.5-4B UD-Q4_K_XL)**:
+  ~**160–175 tok/s agregados** (completion) com 8 concorrentes; cada par custa **~240
+  completion tokens** (pergunta+resposta+evidência) e o **prompt do trecho de 2.000 chars
+  custa ~1.100 tokens** (prefill é ~⅓ do tempo de cada request). Resultado: **~40 pares/min**
+  ⇒ **30k pares ≈ 11–12 h**. Prefill é caro: chunks menores (ou 2 pares por chamada)
+  são as alavancas se precisar acelerar.
+- **Detector de spam**: `chars/token` do NOSSO tokenizer **não serve** (texto "spun" de SEO
+  comprime igual a texto bom: 3,93 vs mediana 4,13). O que funcionou: filtro duro +
+  veto `invalido` do professor + **blocklist de URL** (spam adulto, pirataria e sites de
+  "assistir filme dublado" passam por serem texto legível). Gancho: `--deny-url-regex`.
+- **`is_pt` precisa aceitar palavra de 1 letra**: `[^\W\d_]{2,}` ignora "a", "o", "e", "é" e
+  reprovava perguntas curtas legítimas. Agora conta palavras funcionais **+ palavras
+  acentuadas** (2 sinais).
+- **Modo misto (50/50) muda duas regras**: sem contexto, a pergunta não pode citar
+  "texto/trecho/documento" (ninguém teria o trecho em mãos) e a recusa é outra frase.
 - O campo `evidencia` (cópia literal) é a única verificação automática barata de que o
   professor não inventou — **não remova do schema**.
 
@@ -198,6 +245,17 @@ Feito:
   rng fixo); amostras de pt em parágrafos coerentes; KV cache **5,8×/10,6×/11,8×**
   (ctx 512/1024/2016, B=16) com **tokens idênticos** ao caminho naive. `tests/test_sample.py`
   (6 testes; suíte **37 verdes**). Relatório em `runs/pt-120m/eval.json`.
+- ✅ **SFT-1 (gerador do dataset) — 2026-10-30**: `scripts/gen_sft.py` (~600 linhas) +
+  `tests/test_gen_sft.py` (**21 testes**, professor fake, sem rede; suíte total **58 verdes**).
+  Filtro de fonte duro + blocklist + teto por domínio; chunking em parágrafos (≤2.000 chars
+  ≈ 500 tokens); 8 chamadas concorrentes; JSON estrito via `json_schema`; validação local
+  (evidência **literal**, pt, tamanhos, dedup exata de pergunta) com até 3 tentativas por
+  trecho; JSONL com `chunk_text` + procedência; `--resume` idempotente; stats em
+  `<out>.stats.json`. **Piloto v1** (ancorado só): 300 pares em 7,4 min, 143 docs, 139
+  domínios, 0 perguntas duplicadas — auditado à mão, achou spam adulto/pirataria (→ blocklist)
+  e 28 perguntas citando "o texto" (→ motivou o modo misto). **Piloto v2** (50/50):
+  163 ancorados / 137 sem contexto, 0 duplicatas, 0 vazamentos, `menciona_fonte` barrou 37.
+  Restos: `data/sft/pilot-v{1,2}.jsonl` + `.stats.json`.
 
 ## Decisões de treino (Passo 6)
 
@@ -215,7 +273,8 @@ Feito:
 |---|---|---|---|
 | ~~6~~ ✅ | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | ✅ val 2,507 estável; resume bit-exato |
 | ~~7~~ ✅ | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | ✅ pt coerente; ppl 11,67; KV cache 10,6–11,8× (B16) |
-| **SFT-1..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: gerador de dataset → validador → treino SFT → avaliação | `scripts/gen_sft.py`, `validate_sft.py`, `train_sft.py` | dataset auditado + modelo respondendo em formato |
+| ~~SFT-1~~ ✅ | **Gerador do dataset** (30k pares, misto ancorado/closed-book), 21 testes | `scripts/gen_sft.py` | ✅ 2 pilotos auditados; volume rodando |
+| **SFT-2..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: validador → treino SFT → avaliação | `validate_sft.py`, `train_sft.py` | dataset auditado + modelo respondendo em formato |
 | ~~8~~ ⏸️ | **SUSPENSO**: escalar p/ Pingo-350M (decisão do usuário 2026-10-30) | `pingo/config.py` | — |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).
