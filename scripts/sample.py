@@ -41,6 +41,16 @@ from pingo.cache import PingoCache  # noqa: E402
 from pingo.generate import generate  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 
+def resolve_tokenizer(model_dir: Path, default_path: Path) -> Path:
+    """Modelo SFT salva o seu `tokenizer.json` (16.387 tokens) ao lado dos pesos — ele manda.
+
+    Sem isso, avaliar o SFT com o tokenizer do pré-treino (16.384) decodificaria os tokens de
+    chat como bytes soltos.
+    """
+    cand = Path(model_dir) / "tokenizer.json"
+    return cand if cand.exists() else Path(default_path)
+
+
 def _autocast(device: str):
     """bf16 na GPU (como no treino); em CPU, sem autocast (fp32 já é o caminho nativo)."""
     if device == "cuda":
@@ -211,7 +221,7 @@ def main(argv=None) -> dict:
         print(f"val: loss {pp['val_loss']} | ppl {pp['val_pplx']} | "
               f"{pp['bits_per_token']} bits/token ({pp['tokens_avaliados']:,} tokens)")
 
-    tok = Tokenizer.from_file(str(args.tokenizer))
+    tok = Tokenizer.from_file(str(resolve_tokenizer(args.model, args.tokenizer)))
     prompts = args.prompts or DEFAULT_PROMPTS
     report["samples"] = []
     print("\n--- amostras ---")

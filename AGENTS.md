@@ -11,10 +11,13 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 ## Onde estamos
 
 **Fase 1 CONCLUÍDA (Passos 1–7) — e o PLANO MUDOU: agora é SFT, não o Pingo-350M.**
-**SFT-1 e SFT-2 CONCLUÍDOS em 2026-10-30** — `scripts/gen_sft.py` (gerador, 21 testes) e
-`scripts/validate_sft.py` (validador/dedup/split, 19 testes); regras compartilhadas em
-`pingo/sft.py`. Pilotos auditados (300 pares, 2 versões) e o volume de **30k pares rodando**
-em `data/sft/sft-v1.jsonl` (retomável com `--resume`).
+**SFT-1 a SFT-4 prontos em 2026-10-30** — o pipeline inteiro está escrito e testado:
+`scripts/gen_sft.py` (gerador, 21 testes), `scripts/validate_sft.py` (validador/dedup/split,
+21 testes), `scripts/train_sft.py` (treino, 9 testes) e `scripts/eval_sft.py` (avaliação,
+12 testes); regras compartilhadas em `pingo/sft.py`.
+**O que falta é rodar**: o dataset de 30k pares está sendo gerado em background
+(`data/sft/sft-v1.jsonl`) e, ao terminar, basta validar → treinar → avaliar (comandos na
+seção "▶️ Se você é uma NOVA sessão").
 
 Decisão do usuário em 2026-10-30: **o Passo 8 (escalar p/ 350M) está suspenso**. A próxima
 etapa é **SFT** (instruction tuning) do Pingo-120M com um dataset de Q&A gerado
@@ -32,32 +35,37 @@ Estado do que existe hoje:
   val loss 2,507 / **ppl 11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente,
   KV cache 10,6–11,8× em serving (B=16). Avaliação reproduzível: `scripts/sample.py`;
   relatório em `runs/pt-120m/eval.json`.
-- **Suíte: 88 testes verdes** (37 dos Passos 1–7 + 21 do gerador + 21 do validador + 9 do treino SFT), `main` no GitHub.
+- **Suíte: 100 testes verdes** (37 dos Passos 1–7 + 63 do pipeline SFT), `main` no GitHub.
 - **Professor no ar**: `llama.cpp` (build b11669) na **porta 8001**, modelo
-  `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot. (Quem sobe o servidor
-  é o usuário; ver a seção SFT abaixo.)
+  `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot — ocupa só ~5 GB de VRAM,
+  mas ~85% da GPU enquanto gera o dataset. (Quem sobe o servidor é o usuário.)
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU**: `uv run pytest -q` → **88 verdes** esperados.
+1. **Sanity sem GPU**: `uv run pytest -q` → **100 verdes** esperados.
 2. **GPU** (`nvidia-smi`): se mostrar ~31 GB usados, o **Strata** está de pé — **AVISE o
    usuário antes de qualquer coisa em CUDA** (regra de ouro). O professor llama.cpp ocupa
-   só ~3–4 GB e pode estar rodando junto.
+   ~5 GB e pode estar rodando junto.
 3. **Confirme o professor**: `curl -s localhost:8001/v1/models` deve devolver um Qwen3.5-4B
    GGUF. Se não houver nada, **peça ao usuário para subir** — não suba servidor por conta
    própria (o script de serving mora em `~/llm_serving_scripts/`, fora do repo).
-4. **Não re-treine o base**: `runs/pt-120m/{ckpt.pt,ckpt-prev.pt,best.pt,final/}` é o
-   resultado da Fase 1. `scripts/train.py` sem `--resume` **sobrescreveria** — só rode em
-   outro `--out`. Receita que funcionou: `--compile` + defaults (B16×accum16, ctx 2048,
-   lr 3e-4→3e-5, warmup 400, 5.248 steps); ~101k tok/s ⇒ 7,5 h; 18,8 GiB de VRAM.
-5. **Avaliação do base**: `uv run python scripts/sample.py` (ppl + amostras + bench do
-   KV cache; `--no-ppl`/`--no-bench` p/ encurtar). 2–3 min na GPU.
-6. **Estado do SFT**: o gerador (`scripts/gen_sft.py`) está pronto e testado; o volume de
-   30k pares roda em background (~11 h) e é **retomável**:
-   `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume`
-   (não deixe dois escritores no mesmo arquivo). Confira o progresso pela 1ª linha do
-   `data/sft/sft-v1.log` e pelo `wc -l data/sft/sft-v1.jsonl`.
-   **Próxima tarefa: SFT-2** (`scripts/validate_sft.py` — dedup MinHash + split por documento).
+4. **Não re-treine o base e não apague nada de `runs/pt-120m/`**: é o resultado da Fase 1
+   (`scripts/train.py` sem `--resume` **sobrescreveria**). Existe backup **read-only** em
+   `runs/pt-120m-BACKUP-2026-10-30/` (ver acima). O SFT grava em `runs/sft-120m/`.
+
+**Onde o pipeline SFT parou (2026-10-30, fim de sessão):**
+
+| Passo | Comando | Estado |
+|---|---|---|
+| gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | 🔄 **rodando em background** (4.5k/30k em 2026-10-30 12h37; ETA ~10 h). Se o processo morreu, é só repetir o comando (idempotente). **Nunca** dois escritores no mesmo arquivo. |
+| conferir | `wc -l data/sft/sft-v1.jsonl` (alvo 30000) e `tail -c 300 data/sft/sft-v1.log` | — |
+| validar + dividir | `uv run python scripts/validate_sft.py` | ⬜ ~30 s; gera `data/sft/final/{train,val,heldout}.jsonl` + `stats.json` + `rejects.jsonl` |
+| treinar | `uv run python scripts/train_sft.py` | ⬜ ~1–2 h GPU; grava `runs/sft-120m/` (`ckpt.pt`, `best.pt`, `final/`, `log.jsonl`); `--resume` funciona |
+| avaliar | `uv run python scripts/eval_sft.py --n 200 --judge` | ⬜ gera `runs/sft-120m/final/eval_sft.json` (formato, F1, fidelidade, ppl pré-treino) |
+| (opcional) | `scripts/sample.py --model runs/sft-120m/final` | já resolve o tokenizer de 16.387 sozinho |
+
+**O dataset é retomável e o validador tolera arquivo sendo escrito** (linha truncada é
+descartada), mas o treino só faz sentido com o arquivo completo.
 
 ## SFT — rumo novo (decidido em 2026-10-30)
 
@@ -73,7 +81,7 @@ O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco 
 | **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~500 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ✅ (30k rodando) |
 | **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ✅ |
 | **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, `<|end|>` no fim, cosine curto, ckpt, resume bit-exato | `scripts/train_sft.py` (+ `pingo/model.py`) | 🔶 código+testes prontos, treino pendente |
-| **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/sample.py --model <sft>` | ⬜ |
+| **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/eval_sft.py` (+ `sample.py` resolve o tokenizer do modelo) | 🔶 código+testes prontos, roda depois do treino |
 | **SFT-5** | Opcional: misturar 10–20% de instruções gerais pt para o modelo não ficar "só respondedor de documentos" | — | ⬜ |
 
 **Piloto primeiro**: gerar **100–300 exemplos**, auditar à mão ~50, e só então rodar volume
@@ -173,6 +181,14 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
   forçada visível para nenhuma query ficar com máscara toda falsa (isso geraria NaN).
 - **Treino SFT em CPU é ~1 exemplos/s** (o 120M leva ~2 min/step com B=2) → o run de verdade
   é na GPU, com o professor parado ou pelo menos sem os 8 slots ocupados.
+- **Métrica lexical de fidelidade não é prova**: `apoio` compara radicais de 5 letras, então
+  paráfrase legítima ("planeja" × "plano") derruba o número e invenção gramatical pode passar.
+  Use-a como triagem; o veredito do professor (`eval_sft.py --judge`) é o que fecha a questão.
+  Punição por flexão foi um bug real: sem o `_stem`, "investe" × "investimentos" já derrubava.
+- **Geração do SFT PARA em `<|end|>`**: `pingo.generate.generate(stop_token=...)` **inclui**
+  o token de parada na saída — por isso `limpar_geracao()` o remove antes de medir F1/apoio, e
+  `terminou` é medido no texto cru. Um modelo não treinado repete `<|assistant|>` em loop:
+  geração "vazia" depois da limpeza é sintoma de modelo não treinado, não de bug do script.
 - **Desempenho medido do professor (2026-10-30, 8 slots, Qwen3.5-4B UD-Q4_K_XL)**:
   ~**160–175 tok/s agregados** (completion) com 8 concorrentes; cada par custa **~240
   completion tokens** (pergunta+resposta+evidência) e o **prompt do trecho de 2.000 chars
@@ -302,6 +318,17 @@ Feito:
   **Sanidade com o checkpoint real (CPU, 2 steps): train loss 3,19 → 2,32, val 2,64, acc 0,566**
   — números de partida saudáveis. Defaults: 3 épocas, B 8 × accum 4, `max-len` 1024,
   GPU estimada em ~1–2 h (30k pares × 3 épocas). **Falta rodar com o dataset completo.**
+- 🔶 **SFT-4 (avaliação) ESCRITO — 2026-10-30, roda depois do treino**: `scripts/eval_sft.py` +
+  `tests/test_eval_sft.py` (**12 testes**; suíte **100 verdes**). Gera a resposta de cada
+  exemplo do `heldout` (KV cache, `stop_token=<|end|>`, repetition penalty 1.15) e mede:
+  **formato** (fração que termina em `<|end|>`), **F1 de palavras** contra a resposta de
+  referência, **fidelidade lexical** (`apoio`: fração das palavras de conteúdo da geração cujo
+  radical de 5 letras aparece no trecho de origem) separada por ancorado/sem contexto,
+  **recusa** (a frase certa para cada modo) e, com `--judge`, o **veredito do professor**
+  (sim/parcial/nao) — este último é o número que vale para "não inventou". Também compara a
+  **ppl no val do pré-treino** antes (base) × depois (SFT): fator >1,3 = esquecimento
+  catastrófico, investigar. `scripts/sample.py` passou a usar `<modelo>/tokenizer.json`
+  quando existe (senão avaliaria o SFT com o vocab de 16.384).
 
 ## Decisões de treino (Passo 6)
 
@@ -322,7 +349,8 @@ Feito:
 | ~~SFT-1~~ ✅ | **Gerador do dataset** (30k pares, misto ancorado/closed-book), 21 testes | `scripts/gen_sft.py` | ✅ 2 pilotos auditados; volume rodando |
 | ~~SFT-2~~ ✅ | **Validador**: revalida cada linha, dedup MinHash/LSH (pergunta e trecho) e split por documento sem vazamento | `scripts/validate_sft.py` | ✅ 77 testes; 1.300 ex/s |
 | ~~SFT-3~~ 🔶 | **Treino SFT** escrito e testado (88 verdes), **ainda não executado**: falta o dataset completo e a GPU | `scripts/train_sft.py`, `pingo/model.py`, `pingo/sft.py` | ⬜ rodar e olhar a curva |
-| **SFT-4..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: avaliação do SFT → (opcional) mistura de instruções gerais | `sample.py` (precisa de `--tokenizer`) | modelo respondendo em formato |
+| ~~SFT-4~~ 🔶 | **Avaliação do SFT** escrita e testada: formato (`<|end|>`), F1 vs referência, fidelidade lexical + veredito do professor (`--judge`) e ppl do pré-treino antes/depois | `scripts/eval_sft.py` | ⬜ rodar depois do treino |
+| **SFT-5** (opcional) | misturar 10–20% de instruções gerais em pt para o modelo não virar "só respondedor de documentos" | — | ⬜ |
 | ~~8~~ ⏸️ | **SUSPENSO**: escalar p/ Pingo-350M (decisão do usuário 2026-10-30) | `pingo/config.py` | — |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).
