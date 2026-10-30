@@ -93,7 +93,13 @@ class Attention(nn.Module):
         b, t, _ = proj.shape
         return proj.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)  # [B,H,T,D]
 
-    def forward(self, x, cos, sin, cache: PingoCache | None) -> torch.Tensor:
+    def forward(self, x, cos, sin, cache: PingoCache | None = None,
+                attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+        """`attn_mask` bool [B,1,T,T] (True = pode atender) p/ batches com padding.
+
+        Exige `is_causal=False` no SDPA: a causalidade já vem embutida na máscara montada
+        pelo `PingoLM` (passar as duas coisas ao SDPA deixa o comportamento ambíguo).
+        """
         b, t, _ = x.shape
         q = apply_rope(self._split(self.q_proj(x)), cos, sin)
         k = apply_rope(self._split(self.k_proj(x)), cos, sin)
@@ -112,9 +118,12 @@ class Attention(nn.Module):
                     f"recebeu t={t} com cache já em {kv_len - t}"
                 )
         else:
-            is_causal = True
+            is_causal = attn_mask is None  # com máscara explícita, a causalidade vem nela
 
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        if attn_mask is None:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         y = y.transpose(1, 2).reshape(b, t, -1)
         return self.o_proj(y)
 
@@ -143,8 +152,9 @@ class PingoBlock(nn.Module):
         self.norm_mlp = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = SwiGLU(config)
 
-    def forward(self, x, cos, sin, cache: PingoCache | None) -> torch.Tensor:
-        x = x + self.attn(self.norm_attn(x), cos, sin, cache)
+    def forward(self, x, cos, sin, cache: PingoCache | None = None,
+                attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+        x = x + self.attn(self.norm_attn(x), cos, sin, cache, attn_mask)
         return x + self.mlp(self.norm_mlp(x))
 
 
@@ -185,7 +195,14 @@ class PingoLM(PreTrainedModel):
         position_ids: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
         cache: PingoCache | None = None,
+        attention_mask: torch.Tensor | None = None,
     ) -> CausalLMOutputWithPast:
+        """`attention_mask` [B,T] com 1 = token real, 0 = padding (convenção HF).
+
+        Padding é **à direita** (pad no fim): assim as posições dos tokens reais continuam
+        0..n-1 e o RoPE não precisa de deslocamento. `labels` usa `-100` nas posições que não
+        devem contribuir para a loss (prompt e padding) — default do `cross_entropy`.
+        """
         b, t = input_ids.shape
         if position_ids is None:
             if cache is not None:
@@ -195,10 +212,21 @@ class PingoLM(PreTrainedModel):
             else:
                 position_ids = torch.arange(t, device=input_ids.device).unsqueeze(0).expand(b, t)
 
+        attn_mask = None
+        if attention_mask is not None:
+            if cache is not None:
+                raise ValueError("attention_mask não é suportado junto com PingoCache")
+            keep = attention_mask.bool()[:, None, None, :]           # [B,1,1,T]
+            causal = torch.ones(t, t, dtype=torch.bool,
+                                device=input_ids.device).tril()       # [T,T]
+            attn_mask = keep & causal                                 # [B,1,T,T]
+            # toda linha precisa de pelo menos uma chave (token 0 enxerga a si mesmo)
+            attn_mask[:, :, :, 0] = True
+
         x = self.embed(input_ids)
         cos, sin = self.rope.tables(position_ids)
         for blk in self.blocks:
-            x = blk(x, cos, sin, cache)
+            x = blk(x, cos, sin, cache, attn_mask)
         if cache is not None:
             cache.commit()
         x = self.norm(x)

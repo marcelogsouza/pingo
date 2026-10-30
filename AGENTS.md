@@ -32,14 +32,14 @@ Estado do que existe hoje:
   val loss 2,507 / **ppl 11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente,
   KV cache 10,6–11,8× em serving (B=16). Avaliação reproduzível: `scripts/sample.py`;
   relatório em `runs/pt-120m/eval.json`.
-- **Suíte: 77 testes verdes** (37 dos Passos 1–7 + 21 do gerador + 19 do validador), `main` no GitHub.
+- **Suíte: 88 testes verdes** (37 dos Passos 1–7 + 21 do gerador + 21 do validador + 9 do treino SFT), `main` no GitHub.
 - **Professor no ar**: `llama.cpp` (build b11669) na **porta 8001**, modelo
   `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot. (Quem sobe o servidor
   é o usuário; ver a seção SFT abaixo.)
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU**: `uv run pytest -q` → **77 verdes** esperados.
+1. **Sanity sem GPU**: `uv run pytest -q` → **88 verdes** esperados.
 2. **GPU** (`nvidia-smi`): se mostrar ~31 GB usados, o **Strata** está de pé — **AVISE o
    usuário antes de qualquer coisa em CUDA** (regra de ouro). O professor llama.cpp ocupa
    só ~3–4 GB e pode estar rodando junto.
@@ -72,7 +72,7 @@ O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco 
 |---|---|---|---|
 | **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~500 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ✅ (30k rodando) |
 | **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ✅ |
-| **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, packing com `<|end|>`, cosine curto, ckpt | `scripts/train_sft.py` (+ `pingo/model.py`) | ⬜ |
+| **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, `<|end|>` no fim, cosine curto, ckpt, resume bit-exato | `scripts/train_sft.py` (+ `pingo/model.py`) | 🔶 código+testes prontos, treino pendente |
 | **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/sample.py --model <sft>` | ⬜ |
 | **SFT-5** | Opcional: misturar 10–20% de instruções gerais pt para o modelo não ficar "só respondedor de documentos" | — | ⬜ |
 
@@ -112,8 +112,10 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
 
 1. **Tokens de chat**: **(B) tokens especiais** — adicionar `<|user|>/<|assistant|>/<|end|>` ao
    tokenizer (`vocab_size` 16.384→16.387, `resize_token_embeddings`, init dos novos na média
-   dos embeddings). Ainda **não implementado**: é tarefa do SFT-3. *(ATENÇÃO: hoje o
-   `tokenizer/tokenizer.json` está com 16.384 — não regerar o tokenizer, só adicionar tokens.)*
+   dos embeddings). **Implementado no SFT-3** (`pingo/sft.ensure_chat_tokens` +
+   `train_sft.resize_embeddings`). *(ATENÇÃO: `tokenizer/tokenizer.json` continua com 16.384 —
+   não regerar o tokenizer; o SFT adiciona os 3 tokens em memória e salva uma cópia com 16.387
+   em `runs/sft-*/tokenizer.json`.)*
 2. **Volume**: **30 mil pares** (`data/sft/sft-v1.jsonl`).
 3. **Recusas**: **sim, ~5%** (`--recusa-frac 0.05`).
 4. **Formato do exemplo: MISTO 50/50** (`--ancorado-frac 0.5`) — metade **ancorada** (o trecho
@@ -159,6 +161,18 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
   `sys.modules` quebra `@dataclass` (`AttributeError: 'NoneType' object has no attribute
   '__dict__'`). Faça `sys.modules[nome] = mod` antes do `exec_module` (ver
   `tests/test_gen_sft.py` e `tests/test_validate_sft.py`).
+- **O modelo prevê o PRÓXIMO token** — no SFT, `labels[t]` tem de ser `ids[t+1]`; foi o bug
+  mais caro do SFT-3. Com `labels[t] = ids[t]` o treino "funciona" (acc 56%) e a loss fica em
+  **12** em vez de **~2,6**, porque o modelo só precisa de copiar o token do residual stream.
+  Regra: a resposta começa em `np_`, logo `labels[np_-1 : len(s)-1] = ids[np_]`.
+- **HF v5 devolve `CausalLMOutputWithPast`, que também indexa como tupla**: `out[0]` é a loss,
+  mas `out[0, :4]` estoura `TypeError: tuple indices must be integers`. Use `out.logits[...]`.
+- **`attention_mask` e `PingoCache` são mutuamente exclusivos** (o cache é inferência de
+  batch 1): o modelo levanta `ValueError` se vierem juntos. Pad é **à direita** para as
+  posições reais continuarem 0..n-1 (RoPE não precisa de deslocamento); a linha 0 do bloco é
+  forçada visível para nenhuma query ficar com máscara toda falsa (isso geraria NaN).
+- **Treino SFT em CPU é ~1 exemplos/s** (o 120M leva ~2 min/step com B=2) → o run de verdade
+  é na GPU, com o professor parado ou pelo menos sem os 8 slots ocupados.
 - **Desempenho medido do professor (2026-10-30, 8 slots, Qwen3.5-4B UD-Q4_K_XL)**:
   ~**160–175 tok/s agregados** (completion) com 8 concorrentes; cada par custa **~240
   completion tokens** (pergunta+resposta+evidência) e o **prompt do trecho de 2.000 chars
@@ -278,6 +292,16 @@ Feito:
   `rejects.jsonl`. ~**1.300 exemplos/s** (30k em ~25 s). Em 3.386 linhas reais: 21 barradas
   (18 trechos espelhados — páginas de template e políticas de privacidade copiadas — e 3
   perguntas quase iguais), 0 duplicado exato, splits ~90/5/5.
+- 🔶 **SFT-3 (treino) ESCRITO — 2026-10-30, ainda não rodado**: `scripts/train_sft.py` +
+  `tests/test_train_sft.py` (**9 testes**; suíte **88 verdes**). Faz: tokens de chat no
+  tokenizer (16.384→16.387, init **na média**, tie `lm_head↔embed` refeito), `attention_mask`
+  no `pingo/model.py` (retrocompatível: sem máscara, `is_causal=True` como antes), **loss só
+  na resposta** (`-100` no prompt e no padding, `<|end|>` no fim), épocas com cosine curto
+  (lr 1e-4→1e-5, warmup 50), ckpt/best/`final/` + `log.jsonl` + `--resume` **bit-exato**
+  (testado: 4 steps == 2 + resume 2), e salva `tokenizer.json` junto do modelo.
+  **Sanidade com o checkpoint real (CPU, 2 steps): train loss 3,19 → 2,32, val 2,64, acc 0,566**
+  — números de partida saudáveis. Defaults: 3 épocas, B 8 × accum 4, `max-len` 1024,
+  GPU estimada em ~1–2 h (30k pares × 3 épocas). **Falta rodar com o dataset completo.**
 
 ## Decisões de treino (Passo 6)
 
@@ -297,7 +321,8 @@ Feito:
 | ~~7~~ ✅ | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | ✅ pt coerente; ppl 11,67; KV cache 10,6–11,8× (B16) |
 | ~~SFT-1~~ ✅ | **Gerador do dataset** (30k pares, misto ancorado/closed-book), 21 testes | `scripts/gen_sft.py` | ✅ 2 pilotos auditados; volume rodando |
 | ~~SFT-2~~ ✅ | **Validador**: revalida cada linha, dedup MinHash/LSH (pergunta e trecho) e split por documento sem vazamento | `scripts/validate_sft.py` | ✅ 77 testes; 1.300 ex/s |
-| **SFT-3..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: treino SFT → avaliação | `train_sft.py` (+ `pingo/model.py`) | modelo respondendo em formato |
+| ~~SFT-3~~ 🔶 | **Treino SFT** escrito e testado (88 verdes), **ainda não executado**: falta o dataset completo e a GPU | `scripts/train_sft.py`, `pingo/model.py`, `pingo/sft.py` | ⬜ rodar e olhar a curva |
+| **SFT-4..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: avaliação do SFT → (opcional) mistura de instruções gerais | `sample.py` (precisa de `--tokenizer`) | modelo respondendo em formato |
 | ~~8~~ ⏸️ | **SUSPENSO**: escalar p/ Pingo-350M (decisão do usuário 2026-10-30) | `pingo/config.py` | — |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).

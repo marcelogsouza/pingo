@@ -213,3 +213,36 @@ def test_main_ponta_a_ponta(tmp_path):
     assert total == stats["aceitos"] == len(recs) - 2  # fora: 1 ruim + 1 duplicado
     assert all(len(s) == 1 for s in docs.values())  # nenhum doc em dois splits
     assert stats["splits"]["train"]["exemplos"] > stats["splits"]["val"]["exemplos"]
+
+
+# ------------------------------------------------------------------ tokens de chat / render
+
+
+def test_ensure_chat_tokens_idempotente(tmp_path):
+    from tokenizers import Tokenizer
+
+    tok = Tokenizer.from_file(str(ROOT / "tokenizer" / "tokenizer.json"))
+    from pingo.sft import CHAT_TOKENS, chat_token_ids, ensure_chat_tokens
+
+    antes = tok.get_vocab_size()
+    assert ensure_chat_tokens(tok) == 3
+    assert ensure_chat_tokens(tok) == 0  # idempotente
+    ids = chat_token_ids(tok)
+    assert [ids[t] for t in CHAT_TOKENS] == [antes, antes + 1, antes + 2]
+    # roundtrip: os tokens são atômicos (não viram bytes soltos)
+    enc = tok.encode("Contexto: x<|assistant|>oi<|end|>")
+    assert ids["<|assistant|>"] in enc.ids and ids["<|end|>"] in enc.ids
+
+
+def test_render_ancorado_e_livre():
+    from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, format_record, render
+
+    anc = rec()
+    prompt, resposta = render(anc)
+    assert prompt.startswith(USER_TOKEN + "Contexto: ") and CHUNK[:40] in prompt
+    assert prompt.endswith("Pergunta: " + anc["pergunta"] + ASSISTANT_TOKEN)
+    assert resposta == anc["resposta"] + END_TOKEN
+
+    livre = render(rec(ancorado=False))
+    assert "Contexto:" not in livre[0] and livre[0].startswith(USER_TOKEN + "Pergunta: ")
+    assert format_record(anc) == render(anc)[0] + render(anc)[1]

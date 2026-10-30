@@ -27,6 +27,50 @@ RECUSA_PREFIXO = {True: "isso não consta", False: "não tenho informa"}
 # pergunta de exemplo SEM contexto não pode citar a fonte (ninguém teria o trecho em mãos)
 FONTE_RE = re.compile(r"(?i)\b(trecho|texto|documento|artigo|mat[ée]ria|fonte)\b")
 
+# ---------------------------------------------------------------- tokens de chat
+
+# Decisão do usuário (2026-10-30): delimitadores como tokens ESPECIAIS, não texto puro.
+# São 3 ids novos no fim do vocab (16.384 → 16.387); o SFT-3 faz resize + init na média.
+USER_TOKEN = "<|user|>"
+ASSISTANT_TOKEN = "<|assistant|>"
+END_TOKEN = "<|end|>"
+CHAT_TOKENS = [USER_TOKEN, ASSISTANT_TOKEN, END_TOKEN]
+
+
+def ensure_chat_tokens(tokenizer) -> int:
+    """Garante os tokens de chat no tokenizer (idempotente). Devolve quantos foram criados."""
+    faltando = [t for t in CHAT_TOKENS if tokenizer.token_to_id(t) is None]
+    if not faltando:
+        return 0
+    before = tokenizer.get_vocab_size()
+    tokenizer.add_special_tokens(faltando)
+    return tokenizer.get_vocab_size() - before
+
+
+def chat_token_ids(tokenizer) -> dict[str, int]:
+    return {t: tokenizer.token_to_id(t) for t in CHAT_TOKENS}
+
+
+def render(rec: dict) -> tuple[str, str]:
+    """Serializa um exemplo em (prompt, resposta) — o texto que o modelo vê e o que ele diz.
+
+    Ancorado leva o trecho (`Contexto: ...`); sem contexto é só a pergunta. O prompt termina
+    em `<|assistant|>` para que a loss comece exatamente no primeiro token da resposta, e a
+    resposta termina em `<|end|>` (o "fim de turno" que o modelo aprende a emitir).
+    """
+    pergunta = (rec["pergunta"] or "").strip()
+    if rec.get("ancorado"):
+        user = f"Contexto: {(rec['chunk_text'] or '').strip()}\n\nPergunta: {pergunta}"
+    else:
+        user = f"Pergunta: {pergunta}"
+    return f"{USER_TOKEN}{user}{ASSISTANT_TOKEN}", f"{(rec['resposta'] or '').strip()}{END_TOKEN}"
+
+
+def format_record(rec: dict) -> str:
+    """Exemplo completo em texto (prompt + resposta) — usado em auditoria e nos testes."""
+    prompt, resposta = render(rec)
+    return prompt + resposta
+
 
 # ---------------------------------------------------------------- texto
 
