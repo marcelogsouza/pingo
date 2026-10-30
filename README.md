@@ -87,7 +87,7 @@ completo, 6 shards). `meta.json` registra contagens/proveniência; `pingo/data.p
 - [x] **3.** Treinamento do tokenizer BPE (16k) — byte-level, **4,09 chars/token** no val (GPT-2: 2,69)
 - [x] **4.** Tokenização → shards binários train/val (uint16, memmap)
 - [x] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários — **127.555.456 params**, equivalência do cache `<1e-5`, overfit→0, roundtrip HF
-- [ ] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis)
+- [x] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis) — **2,75B tokens em 7,56 h** (~101k tok/s com `torch.compile`); val loss **9,69 → 2,507** (**ppl 12,3**), curva monótona, sem NaN; `--resume` bit-exato
 - [ ] **7.** Geração de texto + perplexidade de validação
 - [ ] 8. Escalar para ~350M
 - [ ] 9. Mid-training / SFT

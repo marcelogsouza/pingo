@@ -10,58 +10,34 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 6 de 7 — Pré-treino: EM ANDAMENTO** (script + testes prontos e verdes em CPU;
-faltam timing na GPU e o run completo — a GPU será liberada: Strata derrubado e Opencode
-migrado para modelo na nuvem).
+**Passo 6 CONCLUÍDO (2026-10-30) — Pingo-120M pré-treinado**. Próximo: **Passo 7**
+(perplexidade no val + geração + benchmark do KV cache). Checkpoint bom em
+`runs/pt-120m/final/` (val loss **2,507** / ppl **12,3**) — run de 5.248 steps, 2,75B
+tokens, **7,56 h**, 100,9k tok/s médio, curva de val monótona, zero NaN.
 
-### ▶️ Se você é uma NOVA sessão (Opencode na nuvem, GPU agora livre) — siga nesta ordem
+### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU** (não precisa do Strata): `uv run pytest -q` → **30 verdes** esperados.
-2. **Confira a GPU livre**: `nvidia-smi` (com o Strata derrubado deve mostrar ~0 MiB usados;
-   se vir ~31 GB ocupados, o Strata ainda está de pé — AVISE o usuário antes de qualquer
-   coisa em CUDA, regra de ouro do projeto).
-3. **Benchmark do micro-batch** (~2–3 min por config; compare `toks_s` no log de cada uma;
-   monitore VRAM com `nvidia-smi` em outro terminal):
-   ```bash
-   uv run python scripts/train.py --batch-size 16 --accum-steps 16 --max-steps 40 \
-       --eval-steps 999 --ckpt-min 999999 --out runs/bench-b16
-   uv run python scripts/train.py --batch-size 32 --accum-steps 8 --max-steps 40 \
-       --eval-steps 999 --ckpt-min 999999 --out runs/bench-b32
-   ```
-   Escolha o maior B que rodar folgado (deixar >4 GB livres) e mantenha o batch GLOBAL em
-   512 sequences (B×accum=512, ou seja 524k tok/step — não mude isso sem recompensar lr).
-4. **Smoke do 120M real** (~10–15 min):
-   ```bash
-   uv run python scripts/train.py --max-steps 150 --out runs/smoke-120m --log-steps 10 --eval-steps 75
-   ```
-   A loss deve sair de ~9,7 (ln 16384) caindo de forma limpa (sem NaN/spikes); `final/`
-   deve aparecer em `runs/smoke-120m/`.
-5. **Run completo** (~5.248 steps; lance ASSIM, com `nohup`, para sobreviver ao fim da
-   sessão do agente):
-   ```bash
-   mkdir -p runs/pt-120m
-   nohup uv run python scripts/train.py > runs/pt-120m/train.out 2>&1 &
-   tail -n 20 runs/pt-120m/log.jsonl        # acompanhar depois (linhas train_loss/val_loss)
-   ```
-   Estimativa: plano previa ~60–80M tok/s na RTX PRO 4500 → 10–13 h; se não couber numa
-   noite, deixe os ckpts de 15 min e na noite seguinte rode
-   `uv run python scripts/train.py --resume` (mesmos args default; a curva continua
-   idêntica — testado bit-exato). **Nunca rode o run completo sem `--resume` se
-   `runs/pt-120m/ckpt.pt` existe** (recomeçaria do zero e sobrescreveria).
-6. **Critérios para fechar o Passo 6** (da PLAN.md): val loss caindo de forma estável
-   (esperado: ~9,7 no início; ordem de ~3,2–3,9 no fim com 2,75B tokens; ppl do val fica
-   alta em absoluto — ruído do OSCAR, é régua relativa); checkpoint `--resume` já validado
-   em teste unitário; se quiser provar na prática: Ctrl-C no meio, `--resume`, a curva
-   continua sem descontinuidade.
-7. **Fechar**: marcar `[x] 6.` no roadmap do README, atualizar AGENTS.md (estado real:
-   steps rodados, tok/s medido, val loss final), commit `step 6: pré-treino ...`.
-   Passo 7 (`scripts/sample.py`): perplexidade no val + geração (`pingo/generate.py` já
-   existe e é testado) + benchmark 10× KV cache (agora possível com a GPU livre).
+1. **Sanity sem GPU**: `uv run pytest -q` → **31 verdes** esperados.
+2. **Confira a GPU livre** (`nvidia-smi`): se mostrar ~31 GB usados, o Strata está de pé —
+   **AVISE o usuário antes de qualquer coisa em CUDA** (regra de ouro). GPU livre = ~0 MiB.
+3. **Não re-treine**: o Passo 6 já está fechado; `runs/pt-120m/{ckpt.pt,ckpt-prev.pt,
+   best.pt,final/}` são o resultado. Rodar `scripts/train.py` sem `--resume` aí
+   **sobrescreveria** o run bom — só faça isso se o usuário pedir outro run (use `--out`
+   novo). Receita que funcionou: `uv run python scripts/train.py --compile` (defaults =
+   B16×accum16, ctx 2048, lr 3e-4→3e-5, warmup 400, 5.248 steps, eval a cada 250,
+   ckpt a cada 15 min). Memória de cálculo: ~101k tok/s com compile (55k sem) ⇒ 2,75B
+   tokens ≈ 7,5 h; VRAM 18,8 GiB com compile (28,5 sem) de 32,6 GiB.
+4. **Se precisar parar/retomar**: `--resume` com os MESMOS args (inclusive `--max-steps`,
+   que NÃO vai no ckpt e define o lr); `KeyboardInterrupt` salva ckpt.
+5. **Passo 7** (`scripts/sample.py`): perplexidade no val com o `final/`, geração
+   (`pingo/generate.py` já funciona e é testado) e o benchmark 10× do KV cache — este
+   último precisa de ctx longo para aparecer (ctx curto dá só ~1,8×).
 
-Vals de referência para não entrar em pânico: init = 9,71; NaN → cortar lr pela metade
-(lr 1,5e-4) e re-começar do zero (run novo, sem ckpt); OOM → baixar B e subir accum na
-mesma proporção. Disco: cada ckpt.pt ≈ 2,2 GB (modelo+otimizador), rotação mantém 2
-(`ckpt.pt` + `ckpt-prev.pt`); `df -h` antes do run.
+Referência de leitura da curva (não entrar em pânico): init = 9,71; o val desceu
+5,02@250 → 3,17@1000 → 2,69@2750 → 2,51@5000 (bem melhor que os 3,2–3,9 que o plano
+estimava). NaN → cortar lr pela metade (1,5e-4) e recomeçar do zero. OOM → baixar B e
+subir accum na mesma proporção. Disco: `ckpt.pt` ≈ 1,5 GB (+ otimizador no payload);
+`runs/pt-120m` inteiro = 4,8 GB (com `best.pt` do vigia).
 
 Feito:
 - ✅ Passo 1 (setup uv + estrutura): deps instaladas, pytest verde, CUDA ok na RTX PRO 4500.
@@ -123,8 +99,14 @@ Feito:
   salvava chaves prefixadas (resume só com compile). Agora `build_optimizer`/`save_ckpt`/
   `resume` fazem `getattr(model, "_orig_mod", model)`; coberto por
   `test_optimizer_com_pesos_de_compile` (**31 testes verdes**).
-  **A fazer:** (1) decidir compile (recomendado: liga, 2× mais rápido e menos VRAM);
-  (2) run completo (`nohup`); (3) conferir val loss estável caindo; (4) `[x] 6.` no roadmap.
+- ✅ **PASSO 6 FECHADO (run de 2026-10-29→30)**: `runs/pt-120m` — 5.248 steps, 2,75B
+  tokens, **7,56 h** (100,9k tok/s médio, `--compile`), VRAM 18,8 GiB, GPU 84–86 °C sem
+  throttle. Val: 5,02@250 → 3,17@1000 → 2,69@2750 → 2,51@5000 → **2,507 final (ppl 12,3)**;
+  monótono, zero NaN. `best.pt` (val 2,5139 @ step 5000) salvo pelo vigia.
+  Qualidade pt: geração coerente com amostragem (ver `[x] 6.` no README); no greedy ela
+  entra em loop de repetição — típico de 120M, assunto do Passo 7 (penalidade/typical).
+  Vigia usado: script externo (lê `log.jsonl`, salva `best.pt`, SIGINT se o val piorar 2×
+  seguidas ou der NaN) — mora fora do repo; se quiser, promover a `scripts/`.
 
 ## Decisões de treino (Passo 6)
 
@@ -132,7 +114,8 @@ Feito:
   com `--resume` (curva idêntica, testada).
 - Amostragem dos batches é **com reposição** (estilo nanoGPT sobre os 2,75B tokens);
   ~63% dos tokens vistos em média numa época de amostragem — aceitável p/ Fase 1.
-- `--compile` existe mas fica OFF no 1º run (menos móveis p/ diagnosticar); testar depois.
+- `--compile` **ficou ON no run real** (medido: 101k vs 55k tok/s e menos VRAM) — o 1º
+  run saiu sem sustos; manter ON em runs futuros.
 - Val do OSCAR tem ruído (casino/spam) → ppl absoluta alta é esperado; régua p/ comparar.
 
 ## Próximos passos (do PLAN.md)
