@@ -59,7 +59,7 @@ Estado do que existe hoje:
 |---|---|---|
 | gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | 🔄 **rodando em background** (4.5k/30k em 2026-10-30 12h37; ETA ~10 h). Se o processo morreu, é só repetir o comando (idempotente). **Nunca** dois escritores no mesmo arquivo. |
 | conferir | `wc -l data/sft/sft-v1.jsonl` (alvo 30000) e `tail -c 300 data/sft/sft-v1.log` | — |
-| validar + dividir | `uv run python scripts/validate_sft.py` | ⬜ ~30 s; gera `data/sft/final/{train,val,heldout}.jsonl` + `stats.json` + `rejects.jsonl` |
+| validar + dividir | `uv run python scripts/validate_sft.py --judge-recusas` | ⬜ ~30 s + ~2 min de juiz; gera `data/sft/final/{train,val,heldout}.jsonl` + `stats.json` + `rejects.jsonl` |
 | treinar | `uv run python scripts/train_sft.py` | ⬜ ~1–2 h GPU; grava `runs/sft-120m/` (`ckpt.pt`, `best.pt`, `final/`, `log.jsonl`); `--resume` funciona |
 | avaliar | `uv run python scripts/eval_sft.py --n 200 --judge` | ⬜ gera `runs/sft-120m/final/eval_sft.json` (formato, F1, fidelidade, ppl pré-treino) |
 | (opcional) | `scripts/sample.py --model runs/sft-120m/final` | já resolve o tokenizer de 16.387 sozinho |
@@ -181,6 +181,10 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
   forçada visível para nenhuma query ficar com máscara toda falsa (isso geraria NaN).
 - **Treino SFT em CPU é ~1 exemplos/s** (o 120M leva ~2 min/step com B=2) → o run de verdade
   é na GPU, com o professor parado ou pelo menos sem os 8 slots ocupados.
+- **Recusa não tem como ser validada localmente**: formato e evidência vazia passam mesmo
+  quando a pergunta é respondível pelo trecho. Só a segunda opinião do professor
+  (`--judge-recusas`) pega isso — e não é opcional: sem ela ~1 em cada 10 recusas ensina o
+  modelo a recusar o que está no texto.
 - **Métrica lexical de fidelidade não é prova**: `apoio` compara radicais de 5 letras, então
   paráfrase legítima ("planeja" × "plano") derruba o número e invenção gramatical pode passar.
   Use-a como triagem; o veredito do professor (`eval_sft.py --judge`) é o que fecha a questão.
@@ -329,6 +333,14 @@ Feito:
   **ppl no val do pré-treino** antes (base) × depois (SFT): fator >1,3 = esquecimento
   catastrófico, investigar. `scripts/sample.py` passou a usar `<modelo>/tokenizer.json`
   quando existe (senão avaliaria o SFT com o vocab de 16.384).
+- ✅ **Recusas verificadas (juiz no validador) — 2026-10-30**: a recusa é o único tipo sem
+  verificação automática e o professor erra: no dataset real achei uma recusa cuja resposta
+  **estava** no trecho ("…já investiu R$ 21.056.242,25…" com a pergunta "qual é o valor
+  total investido"). `validate_sft.py --judge-recusas` faz **uma chamada extra por recusa**
+  (~5% do dataset, ~2 min com 8 threads) perguntando "o TRECHO responde à PERGUNTA?" e
+  descarta as que respondem (`recusa_respondivel` no `stats.json`; erro de rede **mantém** o
+  exemplo). Validado no caso real: marcou a recusa errada e o controle como respondíveis.
+  Suíte: **103 verdes**.
 
 ## Decisões de treino (Passo 6)
 

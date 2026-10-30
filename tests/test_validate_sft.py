@@ -246,3 +246,52 @@ def test_render_ancorado_e_livre():
     livre = render(rec(ancorado=False))
     assert "Contexto:" not in livre[0] and livre[0].startswith(USER_TOKEN + "Pergunta: ")
     assert format_record(anc) == render(anc)[0] + render(anc)[1]
+
+
+# ------------------------------------------------------------------ juiz de recusas
+
+
+def test_filtrar_recusas_descarta_as_respondiveis(monkeypatch):
+    recusas = [dict(rec(tipo="recusa", evidencia="", resposta="Isso não consta no texto.",
+                        doc_id=f"d{i}"), pergunta=f"Pergunta número {i} sobre o plano?")
+               for i in range(4)]
+    # vereditos: 0 = não responde (mantém), 1 = responde (descarta), 2 = erro (mantém)
+    vereditos = iter([False, True, None, False])
+    monkeypatch.setattr(v, "recusa_respondivel", lambda *a, **k: next(vereditos))
+    args = v.parse_args(["--judge-recusas"])
+    mantidas, descartadas, erros = v.filtrar_recusas(recusas, args)
+    assert descartadas == 1 and erros == 1
+    assert [r["doc_id"] for r in mantidas] == ["d0", "d2", "d3"]  # erro não derruba o exemplo
+
+
+def test_judge_desligado_nao_chama_o_professor(tmp_path, monkeypatch):
+    """Sem --judge-recusas nenhuma requisição de rede pode acontecer."""
+    def explode(*a, **k):
+        raise AssertionError("não deveria julgar")
+
+    monkeypatch.setattr(v, "recusa_respondivel", explode)
+    inp = tmp_path / "cru.jsonl"
+    _escreve_jsonl(inp, [rec(tipo="recusa", resposta=RECUSA_ANCORADO, evidencia="")])
+    v.main(["--in", str(inp), "--out-dir", str(tmp_path / "out")])
+    stats = json.loads((tmp_path / "out" / "stats.json").read_text())
+    assert stats["aceitos"] == 1 and stats["juiz_de_recusas"]["ligado"] is False
+
+
+def test_judge_ligado_derruba_recusa_respondivel(tmp_path, monkeypatch):
+    monkeypatch.setattr(v, "recusa_respondivel", lambda *a, **k: True)
+    outro_trecho = ("O programa de energia solar instalou painéis em escolas públicas do "
+                    "interior do estado, com previsão de conclusão das obras até o fim do ano "
+                    "seguinte e contratação de técnicos locais para a manutenção dos "
+                    "equipamentos instalados nas unidades escolares da rede estadual.")
+    inp = tmp_path / "cru.jsonl"
+    _escreve_jsonl(inp, [
+        rec(tipo="recusa", resposta=RECUSA_ANCORADO, evidencia=""),
+        rec(doc_id="doc2", chunk_idx=1, chunk_text=outro_trecho,
+            pergunta="Quantos técnicos serão contratados para a manutenção dos painéis?",
+            evidencia="contratação de técnicos locais para a manutenção"),
+    ])
+    v.main(["--in", str(inp), "--out-dir", str(tmp_path / "out"), "--judge-recusas"])
+    stats = json.loads((tmp_path / "out" / "stats.json").read_text())
+    assert stats["aceitos"] == 1
+    assert stats["motivos"]["recusa_respondivel"] == 1
+    assert stats["juiz_de_recusas"]["descartadas_respondiveis"] == 1

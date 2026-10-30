@@ -35,7 +35,10 @@ import json
 import math
 import random
 import sys
+import urllib.error
+import urllib.request
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -187,6 +190,70 @@ class NearDedup:
         return ""
 
 
+# ---------------------------------------------------------------- juiz de recusa
+
+# A recusa é o único tipo que não tem verificação automática: o professor pode perguntar
+# algo que o trecho RESPONDE e ainda assim escrever "isso não consta" (aconteceu no piloto).
+# Uma segunda chamada barata (só nas ~5% de recusas) resolve.
+DEFAULT_JUDGE_URL = "http://localhost:8001/v1/chat/completions"
+
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "responde": {"type": "string", "enum": ["sim", "parcial", "nao"]},
+    },
+    "required": ["responde"],
+    "additionalProperties": False,
+}
+
+JUDGE_SYSTEM = """Você decide se um TRECHO contém a informação pedida por uma PERGUNTA.
+Responda SOMENTE com o JSON pedido.
+- 'sim': a resposta está no TRECHO (dá para respondê-la lendo só ele).
+- 'parcial': o TRECHO tem parte da informação, mas não responde por inteiro.
+- 'nao': o TRECHO não responde à pergunta."""
+
+
+def recusa_respondivel(pergunta: str, trecho: str,
+                       endpoint: str = DEFAULT_JUDGE_URL,
+                       timeout: float = 180.0) -> bool | None:
+    """True = o trecho RESPONDE à pergunta (logo a recusa está errada). None = erro."""
+    body = {
+        "model": "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
+        "temperature": 0.0, "max_tokens": 64,
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": f"TRECHO:\n{trecho}\n\nPERGUNTA: {pergunta}"},
+        ],
+        "response_format": {"type": "json_schema",
+                            "json_schema": {"name": "checagem", "schema": JUDGE_SCHEMA,
+                                            "strict": True}},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    req = urllib.request.Request(endpoint, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            dados = json.load(resp)
+        return json.loads(dados["choices"][0]["message"]["content"])["responde"] == "sim"
+    except (urllib.error.URLError, OSError, ValueError, KeyError):
+        return None
+
+
+def filtrar_recusas(recusas: list[dict], args) -> tuple[list[dict], int, int]:
+    """Descarta recusas cujo trecho responde à pergunta. Devolve (mantidas, descartadas, erros)."""
+    if not recusas:
+        return [], 0, 0
+    with ThreadPoolExecutor(max_workers=args.judge_workers) as pool:
+        vereditos = list(tqdm(pool.map(
+            lambda r: recusa_respondivel(r["pergunta"], r["chunk_text"], args.judge_url,
+                                         args.judge_timeout), recusas),
+            total=len(recusas), desc="checando recusas", unit="rec"))
+    mantidas = [r for r, v in zip(recusas, vereditos) if v is not True]
+    descartadas = sum(1 for v in vereditos if v is True)
+    erros = sum(1 for v in vereditos if v is None)
+    return mantidas, descartadas, erros
+
+
 # ---------------------------------------------------------------- split e I/O
 
 
@@ -231,6 +298,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=0, help="lê só as N primeiras linhas (teste)")
     p.add_argument("--max-rejects", type=int, default=500,
                    help="quantos exemplos rejeitados gravar em rejects.jsonl")
+    p.add_argument("--judge-recusas", action="store_true",
+                   help="confere cada recusa com o professor (descarta as que o trecho responde)")
+    p.add_argument("--judge-url", default="http://localhost:8001/v1/chat/completions")
+    p.add_argument("--judge-workers", type=int, default=8)
+    p.add_argument("--judge-timeout", type=float, default=180.0)
     return p.parse_args(argv)
 
 
@@ -243,10 +315,9 @@ def main(argv=None) -> None:
     reasons: Counter = Counter()
     dedup = NearDedup(args.q_threshold, args.chunk_threshold, args.seed)
     seen_chunks: set[tuple[str, int]] = set()
-    splits: dict[str, list[dict]] = defaultdict(list)
+    aceitos: list[dict] = []
+    recusas: list[dict] = []
     rejects: list[dict] = []
-    tipos: Counter = Counter()
-    modos: Counter = Counter()
 
     total = 0
     for _i, rec in tqdm(read_jsonl(args.inp, args.limit), desc="validando", unit="ex"):
@@ -272,10 +343,25 @@ def main(argv=None) -> None:
             reasons[f"quase_duplicado_{dup}"] += 1
             continue
         seen_chunks.add(key)  # só conta como "visto" o que foi aceito
+        if rec["tipo"] == "recusa" and args.judge_recusas:
+            recusas.append(rec)  # julga depois, em paralelo, junto com as demais
+            continue
+        aceitos.append(rec)
+
+    if recusas:
+        print(f"checando {len(recusas)} recusas com o professor "
+              f"(descarta as que o trecho responde)...")
+        mantidas, descartadas, erros = filtrar_recusas(recusas, args)
+        reasons["recusa_respondivel"] += descartadas
+        reasons["judge_erro"] += erros
+        aceitos.extend(mantidas)
+
+    tipos: Counter = Counter(r["tipo"] for r in aceitos)
+    modos: Counter = Counter("ancorado" if r["ancorado"] else "livre" for r in aceitos)
+    splits: dict[str, list[dict]] = defaultdict(list)
+    for rec in aceitos:
         rec["split"] = split_of(rec["doc_id"], args.seed, args.val_frac, args.heldout_frac)
         splits[rec["split"]].append(rec)
-        tipos[rec["tipo"]] += 1
-        modos["ancorado" if rec["ancorado"] else "livre"] += 1
 
     # ---- ordem aleatória determinística (evita blocos por domínio) e gravação
     rng = random.Random(args.seed)
@@ -309,6 +395,12 @@ def main(argv=None) -> None:
         "rejeitados": total - aceitos,
         "motivos": dict(reasons.most_common()),
         "quase_duplicatas": {"pergunta": dedup.stats.pergunta, "trecho": dedup.stats.trecho},
+        "juiz_de_recusas": {
+            "ligado": args.judge_recusas,
+            "checadas": len(recusas) if args.judge_recusas else 0,
+            "descartadas_respondiveis": reasons.get("recusa_respondivel", 0),
+            "erros": reasons.get("judge_erro", 0),
+        },
         "splits": {
             nome: {
                 "exemplos": len(splits.get(nome, [])),
