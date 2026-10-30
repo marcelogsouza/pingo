@@ -57,7 +57,7 @@ Estado do que existe hoje:
 
 | Passo | Comando | Estado |
 |---|---|---|
-| gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | 🔄 **rodando em background** (4.5k/30k em 2026-10-30 12h37; ETA ~10 h). Se o processo morreu, é só repetir o comando (idempotente). **Nunca** dois escritores no mesmo arquivo. |
+| gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | 🔄 **rodando em background** (8.851/30k em 2026-10-30 14h31, ~56 pares/min; ETA ~6–7 h). Se o processo morreu, é só repetir o comando (idempotente). **Nunca** dois escritores no mesmo arquivo. |
 | conferir | `wc -l data/sft/sft-v1.jsonl` (alvo 30000) e `tail -c 300 data/sft/sft-v1.log` | — |
 | validar + dividir | `uv run python scripts/validate_sft.py --judge-recusas` | ⬜ ~30 s + ~2 min de juiz; gera `data/sft/final/{train,val,heldout}.jsonl` + `stats.json` + `rejects.jsonl` |
 | treinar | `uv run python scripts/train_sft.py` | ⬜ ~1–2 h GPU; grava `runs/sft-120m/` (`ckpt.pt`, `best.pt`, `final/`, `log.jsonl`); `--resume` funciona |
@@ -148,6 +148,38 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
 ```
 
 `evidencia` é **cópia literal** do `chunk_text` (vazia nas recusas) — SFT-2 revalida isso.
+
+### Comparação com professores remotos (OpenRouter) — 2026-10-30
+
+Medido com `scripts/pilot_teacher_compare.py` (novo; **não toca** no run principal nem no
+llama.cpp): mesmos 60 trechos para os 3 modelos, 32 requisições em voo (janela deslizante),
+prompt/validador idênticos aos do gerador. Saídas em `data/sft/or-{pilot,pilot40,final}/`.
+Custo total do experimento: **US$ 0,07**. Nenhuma credencial ficou no repo (a key foi
+apagada de `~/.openrouter_key`; o script lê `OPENROUTER_API_KEY` ou `--key-file`).
+
+| modelo | aceitos/chunk | cham/chunk | tok/par (in/out) | ~22k pares | vazão @32 |
+|---|---|---|---|---|---|
+| qwen/qwen3.7-flash | 75% | 1,68 | 1.625/247 | ~2,0 h · **US$ 1,79** | 3,07 par/s |
+| deepseek/deepseek-v4.1-flash | **97%** | **1,08** | 971/189 | ~2,6 h · US$ 3,06 | 2,37 par/s |
+| google/gemma-4-26b-a4b-it | 77% | 1,48 | 1.562/284 | ~2,9 h · US$ 5,00 | 2,14 par/s |
+
+- **Qwen 3.5 4B não existe no OpenRouter** (a linha 3.5 começa em "flash" e vai a 397B).
+  Primo mais próximo do 4B local: `gemma-4-26b-a4b-it` (MoE, 4B ativos) e `qwen3.7-flash`.
+- **Achado que decide a escolha**: quanto melhor a prosa, pior o **veto de spam**. O
+  deepseek tem a melhor qualidade de Q&A (resposta 178 chars, 0 metalinguagem no modo
+  livre) mas vetou **3** chunks contra **34** do qwen — aceitou página de cassino
+  ("Qual é o provedor do slot Lucky Little Gods?") e de SEO. É "máquina de sempre
+  responder": sem uma instrução de veto mais dura (ou passe extra de spam), trocar o
+  local por ele injeta casino/SEO no dataset, que é justamente o que o veto protegia.
+- **Gemma parafraseia em vez de citar**: 33 de 89 tentativas caíram em
+  `evidencia_nao_literal` (1/3 dos tokens desperdiçados). Qwen veta demais (perde notícia
+  legítima e texto de lei) e vaza "texto/trecho" no modo closed-book (5 casos).
+- **json_schema funcionou nos três** (Alibaba / Wafer / DeepInfra…) com `reasoning:
+  {"enabled": false}` → `reasoning_tokens = 0`. `chat_template_kwargs` do llama.cpp tem
+  que sair do body ao ir para o OpenRouter.
+- **Speedup real é modesto (2–3×), não ordens de grandeza**: ~2–3 h em vez de ~6 h; o
+  gargalo vira latência/rate limit do provedor. Se um dia for para valer, o mais coerente
+  é regerar os 30k inteiros com **um** professor (US$ 4–7), não misturar a partir dos 8,7k.
 
 ### Gotchas já descobertos com professores locais
 
