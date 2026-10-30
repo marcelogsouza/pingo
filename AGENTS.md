@@ -8,6 +8,15 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 > retomar exatamente de onde parou. Mantenha a seção "Onde estamos" honesta: estado real
 > dos arquivos/commands, não o estado desejado.
 
+> **Este arquivo é o estado vivo; `docs/` é a documentação explicativa.** Desde 2026-10-30
+> existe o vault `docs/` (formato Obsidian, abra a pasta `docs/` como vault; home =
+> `docs/Pingo.md`), com 38 notas narrando **como cada etapa foi feita e por quê**: escolha e
+> filtro do dataset, tokenizer, binarização, arquitetura peça por peça (RMSNorm, RoPE, atenção,
+> SwiGLU, init, params, KV cache, sampling), loop de treino, o run de 7,56 h, avaliação, todo
+> o pipeline de SFT e as notas de referência (`Comandos e cheatsheet`, `Gotchas`, `Glossário`).
+> Usa mermaid + LaTeX e cita os números reais. Ao mudar algo que a nota descreve, atualize a
+> nota (ou pelo menos o número) no mesmo commit.
+
 ## Onde estamos
 
 **Fase 1 CONCLUÍDA (Passos 1–7) — e o PLANO MUDOU: agora é SFT, não o Pingo-350M.**
@@ -410,6 +419,9 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
 ## Convenções
 
 - **Tudo via `uv`**: `uv run ...`, `uv add ...`. Não usar pip/venv direto.
+- **Documentação explicativa em `docs/`** (versionada, fora do gitignore): vault Obsidian com
+  índice em `docs/Pingo.md`, uma nota por etapa + `09-referencia/{Comandos,Gotchas,Glossário}`.
+  Links são wikilinks (`[[Nome]]`); renomear nota exige buscar os links no vault.
 - Commits: mensagem `step N: ...` (ver `git log`); **push só após revisão do usuário**.
 - `data/`, `tokenizer/`, `*.parquet`, `*.bin` são gitignored; `uv.lock` é versionado.
 - Máquinas: dev/testes na M4 local (CPU/MPS, config tiny); treino na RTX PRO 4500 32 GB.
