@@ -157,11 +157,19 @@ flowchart LR
 
 - ✅ **Fase 1 concluída**: Pingo-120M pré-treinado, avaliado, com backup *read-only* em
   `runs/pt-120m-BACKUP-2026-10-30/`.
-- 🔄 **Gerando o dataset de SFT** (`data/sft/sft-v1.jsonl`, meta 30.000 pares, ~22% em
-  2026-10-30 15h). O gerador é retomável: `--resume`.
+- 🔄 **Gerando o dataset de SFT** (`data/sft/sft-v1.jsonl`, meta 30.000 pares, ~69% em
+  2026-10-30 19h45, ~39 pares/min). O gerador é retomável: `--resume`.
 - ⬜ Falta: validar → treinar o SFT → avaliar.
 
-> [!warning] Regra de ouro do repositório
-> `AGENTS.md` é o estado vivo (handoff entre sessões); **este vault** é a documentação
-> explicativa de como cada coisa foi feita e por quê. Se os dois divergirem nos números,
-> o `AGENTS.md` ganha — e este vault deve ser corrigido.
+> [!warning] Regra de ouro do repositório — os dois são vivos
+> **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer
+> agora, o que não quebrar). **Este vault é o arquivo crescente**: a documentação explicativa
+> de como cada coisa foi feita e por quê, com os números por extenso, e o histórico do que já
+> saiu do `AGENTS.md`.
+>
+> - Ao **fechar um passo**, migre para cá o que virou conhecimento (narrativa, números,
+>   gotchas, decisões) numa nota estruturada, **mantendo o que já existe**. Não precisa ser a
+>   cada micro-alteração: vale quando a etapa fecha ou quando o `AGENTS.md` começa a inchar.
+> - O `AGENTS.md` **não guarda** o que já está aqui e não é necessário para executar a etapa
+>   atual. Se algo aqui só existe lá, ele precisa descer para cá.
+> - Se os dois divergirem num número, o `AGENTS.md` ganha — e este vault deve ser corrigido.

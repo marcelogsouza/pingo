@@ -6,9 +6,9 @@ atualizado: 2026-10-30
 
 # Linha do tempo
 
-A história real do projeto, reconstruída a partir do `git log`. **27 commits entre 2026-10-29
-11h58 e 2026-10-30 14h33** — o projeto inteiro (dados → pré-treino → pipeline de SFT) levou
-pouco mais de **26 horas de parede**, sendo ~7,6 h de treino de GPU.
+A história real do projeto, reconstruída a partir do `git log`. **28 commits entre 2026-10-29
+11h58 e 2026-10-30 15h12** — o projeto inteiro (dados → pré-treino → pipeline de SFT) levou
+pouco mais de **27 horas de parede**, sendo ~7,6 h de treino de GPU.
 
 > [!note] Como ler os hashes
 > Os hashes são os do `main` nesta máquina. `docs:` = atualização do estado (`AGENTS.md`/
@@ -54,6 +54,7 @@ pouco mais de **26 horas de parede**, sendo ~7,6 h de treino de GPU.
 | 12:47 | `841af8c` | juiz de recusas no validador (uma 2ª opinião do professor) |
 | 14:31 | `ac9132c` | comparação de professores remotos (OpenRouter) + script de piloto |
 | 14:33 | `0680744` | gotcha do `--resume` no contador do `tqdm` |
+| 15:12 | `6a12418` | **vault `docs/`**: 38 notas (Obsidian) — a documentação explicativa do projeto |
 
 ## O que estava rodando ao fim do dia 2
 

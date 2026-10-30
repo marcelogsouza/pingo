@@ -48,6 +48,13 @@ flowchart TB
 | **blocklist de URL** | porn, xxx, escort, casino, bet, tigrinho, slot, "assistir/dublado/legendado", megafilmes, warez… | spam que **parece** texto legível |
 | **blocklist de texto** | "vídeos picantes", "conteúdo adulto explícito", "maiores de 18 anos" | idem |
 
+Todos os limiares da tabela são flags (default entre parênteses): `--min-chars` (2000),
+`--min-paras` (4), `--max-digits-per-word` (0,25), `--max-upper-ratio` (0,30), `--max-urls` (4),
+`--deny-url-regex` / `--deny-text-regex` (as blocklists abaixo), `--domain-cap-frac` (0,05) e
+`--domain-cap-min` (3). Os do chunking: `--chunk-chars` (2000), `--chunk-min-chars` (700),
+`--max-per-doc` (3). Os da geração: `--workers` (8), `--tries` (3), `--recusa-frac` (0,05),
+`--ancorado-frac` (0,5), `--max-tokens` (400).
+
 ```python
 DENY_URL_DEFAULT = r"(?i)(porn|xxx|nsfw|hentai|escort|onlyfans|putaria|sexo\b|crack|keygen|" \
                    r"warez|torrent|nifentas|bet[0-9]{2}|casino|tigrinho|slot[s]?\b|" \

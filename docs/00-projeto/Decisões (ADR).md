@@ -208,6 +208,25 @@ de professor injetaria lixo no dataset. Ver [[Professores remotos (OpenRouter)]]
 
 ---
 
+## ADR-16 · `AGENTS.md` enxuto e sincronizado com o vault (2026-10-30)
+
+**Problema.** O `AGENTS.md` chegou a 512 linhas / ~10.000 tokens — 62% era história do SFT e
+gotchas já documentados aqui no vault (o vault inteiro são 38 notas / 200 kB, que **não custam
+token** até serem lidas). Todo início de sessão pagava esse custo.
+
+**Decisão.** O `AGENTS.md` guarda só **(a)** onde estamos, **(b)** o que fazer agora, **(c)** o
+que não quebrar — e aponta para cá. Ao **fechar um passo**, o que virou conhecimento desce para
+o vault em nota estruturada (mantendo o que já existe); o que já está aqui e não é necessário
+para a etapa atual **sai** do `AGENTS.md`. Não precisa ser a cada micro-alteração: vale quando
+a etapa fecha ou quando o arquivo começa a inchar. Se um número divergir, o `AGENTS.md` ganha e
+o vault é corrigido.
+
+**Resultado.** 512 → **81 linhas** (~10.000 → ~1.200 tokens por sessão). Nada foi perdido: o que
+saiu já estava (ou foi adicionado) nas notas de SFT, [[Gotchas]], [[Decisões (ADR)]],
+[[Comandos e cheatsheet]], [[Linha do tempo]] e nas notas de pré-treino.
+
+---
+
 ## Ver também
 
 - [[Visão e filosofia]] — o pano de fundo
