@@ -10,33 +10,113 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 7 CONCLUÍDO (2026-10-30) — o Pingo-120M da Fase 1 está pronto e avaliado.**
-Próximo: **Passo 8** (escalar p/ ~350M). Modelo em `runs/pt-120m/final/` — ppl no val
-**11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente, KV cache 10,6–11,8×
-mais rápido em serving (B=16, ctx 1024–2016). Relatório completo em
-`runs/pt-120m/eval.json` (`scripts/sample.py` reproduz).
-Antes: Passo 6 fechado com val loss 2,507 / ppl 12,3 — 5.248 steps, 2,75B tokens,
-7,56 h, 100,9k tok/s, curva monótona, zero NaN.
+**Fase 1 CONCLUÍDA (Passos 1–7) — e o PLANO MUDOU: agora é SFT, não o Pingo-350M.**
+
+Decisão do usuário em 2026-10-30: **o Passo 8 (escalar p/ 350M) está suspenso**. A próxima
+etapa é **SFT** (instruction tuning) do Pingo-120M com um dataset de Q&A gerado
+sinteticamente a partir do próprio corpus OSCAR, usando um **modelo professor local**.
+
+Estado do que existe hoje:
+- Modelo pré-treinado em `runs/pt-120m/final/` (5.248 steps, 2,75B tokens, 7,56 h):
+  val loss 2,507 / **ppl 11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente,
+  KV cache 10,6–11,8× em serving (B=16). Avaliação reproduzível: `scripts/sample.py`;
+  relatório em `runs/pt-120m/eval.json`.
+- **Suíte: 37 testes verdes**, `main` no GitHub, último commit do projeto = Passo 7.
+- **Professor no ar**: `llama.cpp` (build b11669) na **porta 8001**, modelo
+  `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot. (Quem sobe o servidor
+  é o usuário; ver a seção SFT abaixo.)
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU**: `uv run pytest -q` → **31 verdes** esperados.
-2. **Confira a GPU livre** (`nvidia-smi`): se mostrar ~31 GB usados, o Strata está de pé —
-   **AVISE o usuário antes de qualquer coisa em CUDA** (regra de ouro). GPU livre = ~0 MiB.
-3. **Não re-treine**: o Passo 6 já está fechado; `runs/pt-120m/{ckpt.pt,ckpt-prev.pt,
-   best.pt,final/}` são o resultado. Rodar `scripts/train.py` sem `--resume` aí
-   **sobrescreveria** o run bom — só faça isso se o usuário pedir outro run (use `--out`
-   novo). Receita que funcionou: `uv run python scripts/train.py --compile` (defaults =
-   B16×accum16, ctx 2048, lr 3e-4→3e-5, warmup 400, 5.248 steps, eval a cada 250,
-   ckpt a cada 15 min). Memória de cálculo: ~101k tok/s com compile (55k sem) ⇒ 2,75B
-   tokens ≈ 7,5 h; VRAM 18,8 GiB com compile (28,5 sem) de 32,6 GiB.
-4. **Se precisar parar/retomar**: `--resume` com os MESMOS args (inclusive `--max-steps`,
-   que NÃO vai no ckpt e define o lr); `KeyboardInterrupt` salva ckpt.
-5. **Avaliação**: `uv run python scripts/sample.py` (ppl + amostras + bench do KV cache;
-   `--no-ppl` / `--no-bench` p/ encurtar, `--out` p/ JSON). 2–3 min na GPU.
-6. **Passo 8** (próximo, fora da Fase 1): escalar p/ **Pingo-350M** repetindo o pipeline
-   (os shards de 2,75B tokens já existem; ~350M×2,75B é undertrained — vale arrumar mais
-   tokens/Passo 9 antes). Nada foi começado ainda.
+1. **Sanity sem GPU**: `uv run pytest -q` → **37 verdes** esperados.
+2. **GPU** (`nvidia-smi`): se mostrar ~31 GB usados, o **Strata** está de pé — **AVISE o
+   usuário antes de qualquer coisa em CUDA** (regra de ouro). O professor llama.cpp ocupa
+   só ~3–4 GB e pode estar rodando junto.
+3. **Confirme o professor**: `curl -s localhost:8001/v1/models` deve devolver um Qwen3.5-4B
+   GGUF. Se não houver nada, **peça ao usuário para subir** — não suba servidor por conta
+   própria (o script de serving mora em `~/llm_serving_scripts/`, fora do repo).
+4. **Não re-treine o base**: `runs/pt-120m/{ckpt.pt,ckpt-prev.pt,best.pt,final/}` é o
+   resultado da Fase 1. `scripts/train.py` sem `--resume` **sobrescreveria** — só rode em
+   outro `--out`. Receita que funcionou: `--compile` + defaults (B16×accum16, ctx 2048,
+   lr 3e-4→3e-5, warmup 400, 5.248 steps); ~101k tok/s ⇒ 7,5 h; 18,8 GiB de VRAM.
+5. **Avaliação do base**: `uv run python scripts/sample.py` (ppl + amostras + bench do
+   KV cache; `--no-ppl`/`--no-bench` p/ encurtar). 2–3 min na GPU.
+6. **Próxima tarefa (SFT-1)**: escrever `scripts/gen_sft.py` (gerador do dataset) e rodar
+   o **piloto de 100–300 exemplos** para auditoria antes de qualquer volume. Desenho
+   acordado, riscos e decisões pendentes estão na seção **"SFT — rumo novo"** abaixo.
+
+## SFT — rumo novo (decidido em 2026-10-30)
+
+**Objetivo**: ensinar o Pingo-120M a **responder perguntas sobre o mesmo domínio em que foi
+pré-treinado** (OSCAR pt), criando o dataset de instruções **sinteticamente**: um modelo
+professor local lê um trecho do OSCAR e escreve pares pergunta/resposta sobre ele.
+O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco p/ 350M).
+
+### Pipeline acordado (5 etapas, nada implementado ainda)
+
+| Etapa | O que | Arquivo proposto | Status |
+|---|---|---|---|
+| **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~1200 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ⬜ a fazer |
+| **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ⬜ |
+| **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, packing com `<|end|>`, cosine curto, ckpt | `scripts/train_sft.py` (+ `pingo/model.py`) | ⬜ |
+| **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/sample.py --model <sft>` | ⬜ |
+| **SFT-5** | Opcional: misturar 10–20% de instruções gerais pt para o modelo não ficar "só respondedor de documentos" | — | ⬜ |
+
+**Piloto primeiro**: gerar **100–300 exemplos**, auditar à mão ~50, e só então rodar volume
+(20–50 mil já são suficientes para 120M; o gargalo é qualidade, não quantidade).
+
+### Formato do exemplo (JSONL, uma linha por par)
+
+```json
+{"doc_id": "...", "url": "...", "split": "train", "teacher": "Qwen3.5-4B/UD-Q4_K_XL",
+ "prompt_version": "v1", "seed": 13, "tipo": "extracao",
+ "pergunta": "...", "resposta": "...", "evidencia": "<cópia literal do trecho>"}
+```
+
+Taxonomia de `tipo`: `extracao`, `explicacao`, `resumo` — e ~5% de **recusas**
+("isso não consta no texto") para ensinar honestidade.
+
+### Como falar com o professor (llama.cpp :8001) — testado
+
+- **Estilo OpenAI**: `POST /v1/chat/completions`. `pyarrow` já está no projeto; **`requests`
+  NÃO está instalado** (use `urllib.request` ou `uv add requests`).
+- **JSON garantido (essencial)**: `response_format` precisa ser o formato completo —
+  `{"type": "json_schema", "json_schema": {"name": "qa", "schema": {...}, "strict": true}}`.
+  `{"type":"json_object", "schema":...}` é **ignorado** → sai texto livre/quebrado.
+- **Thinking DESLIGADO** (`--reasoning off` / `enable_thinking:false` no servidor): em
+  modo instruct a resposta sai direta. Se vier com raciocínio, ele vai em
+  `message.reasoning_content` (separado do `content`) e **queima o budget de tokens**.
+  Checar `chat_template_kwargs: {"enable_thinking": false}` por request se precisar.
+- Sampling do card (instruct): `temp 0.7 / top_p 0.8 / top_k 20 / min_p 0 / presence 1.5`.
+- `usage.completion_tokens` é o custo real; ~8 slots concorrentes ⇒ ~580 tok/s agregados
+  (medido pelo usuário com outro modelo; reconfirmar com o Qwen).
+- **NÃO** rodar nada em CUDA pesado enquanto o professor estiver servindo — o servidor
+  precisa da VRAM.
+
+### Decisões ainda pendentes (perguntar ao usuário antes de fechar o gerador)
+
+1. **Tokens de chat no nosso tokenizer** (hoje só `<|bos|> <|eos|> <|pad|>`):
+   (A) delimitadores em texto puro (`Pergunta:`/`Resposta:`) ou (B) adicionar
+   `<|user|>/<|assistant|>/<|end|>` → `vocab_size` 16.384→16.387 + `resize_token_embeddings`.
+   **Recomendação: (B)**, com init na média dos embeddings.
+2. **Volume** do dataset depois do piloto (sugestão: 20–50 mil pares).
+3. **Recusas** (~5%) entram ou não.
+4. **Filtro de fonte**: quão agressivo (≥1.500 chars e ≥3 parágrafos já descarta muito lixo,
+   mas também reduz o volume).
+5. **Dataset no repo ou fora** (JSONL de 50k ≈ 50–100 MB → melhor gitignored, com o
+   gerador + sementes versionados).
+
+### Gotchas já descobertos com professores locais
+
+- **LFM2.5-2.6B (tentativa anterior, descartada)**: o template **crava ` thinking`** no
+  prompt de geração (sem switch) e ele gastou **1.661 tokens de raciocínio em inglês para
+  ~180 de conteúdo** (~10×), com `content` vazio quando o budget acaba. Foi o motivo da
+  troca para o Qwen3.5-4B (que tem toggle de thinking de verdade).
+- OSCAR é web cru: **spam/casino/SEO** passa nos filtros do pré-treino. Para o SFT o filtro
+  de fonte tem que ser mais duro (tamanho, dígitos/palavra, links, boilerplate, parágrafos).
+- Amostrar **de `split=train`** sempre; `val` é a régua do pré-treino e não pode vazar.
+- O campo `evidencia` (cópia literal) é a única verificação automática barata de que o
+  professor não inventou — **não remova do schema**.
 
 Referência de leitura da curva (não entrar em pânico): init = 9,71; o val desceu
 5,02@250 → 3,17@1000 → 2,69@2750 → 2,51@5000 (bem melhor que os 3,2–3,9 que o plano
@@ -135,9 +215,13 @@ Feito:
 |---|---|---|---|
 | ~~6~~ ✅ | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | ✅ val 2,507 estável; resume bit-exato |
 | ~~7~~ ✅ | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | ✅ pt coerente; ppl 11,67; KV cache 10,6–11,8× (B16) |
-| **8** | Escalar p/ **Pingo-350M** (mesma receita; precisa de mais tokens — 2,75B é pouco p/ 350M) | `pingo/config.py` | ppl no val melhor que o 120M na mesma régua |
+| **SFT-1..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: gerador de dataset → validador → treino SFT → avaliação | `scripts/gen_sft.py`, `validate_sft.py`, `train_sft.py` | dataset auditado + modelo respondendo em formato |
+| ~~8~~ ⏸️ | **SUSPENSO**: escalar p/ Pingo-350M (decisão do usuário 2026-10-30) | `pingo/config.py` | — |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).
+
+> ⚠️ O roadmap do `README.md` (itens 8–11) ainda está na **ordem antiga** (350M antes de
+> SFT). A ordem vigente é a desta tabela: **SFT primeiro**.
 
 ## Convenções
 
