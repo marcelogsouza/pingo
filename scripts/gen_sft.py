@@ -37,9 +37,7 @@ import re
 import sys
 import threading
 import time
-import unicodedata
 import urllib.error
-import urllib.parse
 import urllib.request
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -50,18 +48,16 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from pingo.sft import (  # noqa: E402  (regras compartilhadas com validate_sft.py)
+    FONTE_RE, RECUSA_ANCORADO, RECUSA_LIVRE, RECUSA_PREFIXO, TIPO_WEIGHTS, TIPOS,
+    domain_of, is_pt, normalize_ws,
+)
 
 PROMPT_VERSION = "v2"
 DEFAULT_TEACHER_MODEL = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
 DEFAULT_TEACHER_URL = "http://localhost:8001/v1/chat/completions"
-
-# proporção de tipos de exemplo (o resto é recusa, controlado por --recusa-frac)
-TIPO_WEIGHTS = {"extracao": 0.50, "explicacao": 0.30, "resumo": 0.15}
-
-# recusa: a frase depende de o exemplo levar o trecho junto (ancorado) ou não
-RECUSA_ANCORADO = "Isso não consta no texto."
-RECUSA_LIVRE = "Não tenho informações suficientes para responder isso."
-RECUSA_PREFIXO = {True: "isso não consta", False: "não tenho informa"}
 
 TIPO_DESCRICAO = {
     "extracao": "faça uma pergunta cuja resposta seja um fato explícito do trecho (nomes, "
@@ -130,40 +126,8 @@ BOILER_RE = re.compile(
     r"privacidade|termos de uso|siga-nos|siga o|newsletter|artigo em|ver mais|"
     r"©|copyright|<|>)"
 )
-PT_STOP = {
-    "a", "o", "as", "os", "um", "uma", "de", "do", "da", "dos", "das", "em", "no", "na",
-    "nos", "nas", "por", "para", "com", "que", "se", "não", "e", "é", "foi", "são", "ao",
-    "aos", "à", "às", "como", "mais", "mas", "ou", "quando", "qual", "quais", "seu", "sua",
-    "seus", "suas", "ele", "ela", "eles", "elas", "isso", "este", "esta", "esse", "essa",
-    "entre", "sobre", "depois", "antes", "também", "já", "há", "ser", "tem", "tinha", "ter",
-}
 
 
-ACCENT_RE = re.compile(r"[áàâãéêíóôõúüç]", re.IGNORECASE)
-
-
-def is_pt(text: str, min_signals: int = 2) -> bool:
-    """Heurística barata de português: conta palavras funcionais + palavras acentuadas.
-
-    Uma frase curta pode ter só uma palavra funcional ("Quanto a companhia investiu?"), por
-    isso as duas pistas somam em vez de exigir várias ocorrências de uma só.
-    """
-    words = re.findall(r"[^\W\d_]+", text.lower())
-    stops = sum(1 for w in words if w in PT_STOP)
-    accents = sum(1 for w in words if ACCENT_RE.search(w))
-    return stops + accents >= min_signals
-
-
-def normalize_ws(text: str) -> str:
-    """NFC + whitespace colapsado — base das comparações de evidência."""
-    return " ".join(unicodedata.normalize("NFC", text).split())
-
-
-def domain_of(url: str) -> str:
-    """Domínio normalizado (sem `www.`) — usado no teto por fonte."""
-    netloc = urllib.parse.urlparse(url).netloc.lower()
-    netloc = netloc.split("@")[-1].split(":")[0]
-    return netloc[4:] if netloc.startswith("www.") else netloc
 
 
 @dataclass
@@ -378,8 +342,6 @@ def ask_teacher(cfg: Config, chunk: str, tipo: str, ancorado: bool,
 
 # ---------------------------------------------------------------- validação
 
-
-FONTE_RE = re.compile(r"(?i)\b(trecho|texto|documento|artigo|mat[ée]ria|fonte)\b")
 
 
 def validate(qa: dict | None, chunk: str, tipo_pedido: str,

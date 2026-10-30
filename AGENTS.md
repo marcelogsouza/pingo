@@ -11,9 +11,10 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 ## Onde estamos
 
 **Fase 1 CONCLUÍDA (Passos 1–7) — e o PLANO MUDOU: agora é SFT, não o Pingo-350M.**
-**SFT-1 (gerador do dataset) CONCLUÍDO em 2026-10-30** — `scripts/gen_sft.py` + 21 testes;
-pilotos auditados (300 pares, 2 versões) e o volume de **30k pares rodando** em
-`data/sft/sft-v1.jsonl` (retomável com `--resume`).
+**SFT-1 e SFT-2 CONCLUÍDOS em 2026-10-30** — `scripts/gen_sft.py` (gerador, 21 testes) e
+`scripts/validate_sft.py` (validador/dedup/split, 19 testes); regras compartilhadas em
+`pingo/sft.py`. Pilotos auditados (300 pares, 2 versões) e o volume de **30k pares rodando**
+em `data/sft/sft-v1.jsonl` (retomável com `--resume`).
 
 Decisão do usuário em 2026-10-30: **o Passo 8 (escalar p/ 350M) está suspenso**. A próxima
 etapa é **SFT** (instruction tuning) do Pingo-120M com um dataset de Q&A gerado
@@ -31,14 +32,14 @@ Estado do que existe hoje:
   val loss 2,507 / **ppl 11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente,
   KV cache 10,6–11,8× em serving (B=16). Avaliação reproduzível: `scripts/sample.py`;
   relatório em `runs/pt-120m/eval.json`.
-- **Suíte: 58 testes verdes** (37 dos Passos 1–7 + 21 do gerador SFT), `main` no GitHub.
+- **Suíte: 77 testes verdes** (37 dos Passos 1–7 + 21 do gerador + 19 do validador), `main` no GitHub.
 - **Professor no ar**: `llama.cpp` (build b11669) na **porta 8001**, modelo
   `unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`, **8 slots**, ctx 4096/slot. (Quem sobe o servidor
   é o usuário; ver a seção SFT abaixo.)
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
-1. **Sanity sem GPU**: `uv run pytest -q` → **58 verdes** esperados.
+1. **Sanity sem GPU**: `uv run pytest -q` → **77 verdes** esperados.
 2. **GPU** (`nvidia-smi`): se mostrar ~31 GB usados, o **Strata** está de pé — **AVISE o
    usuário antes de qualquer coisa em CUDA** (regra de ouro). O professor llama.cpp ocupa
    só ~3–4 GB e pode estar rodando junto.
@@ -70,7 +71,7 @@ O 350M fica para depois (e, quando vier, precisa de mais tokens: 2,75B é pouco 
 | Etapa | O que | Arquivo proposto | Status |
 |---|---|---|---|
 | **SFT-1** | **Gerador**: amostra docs de `data/raw/*.parquet` (`split=train`, **nunca** `val`), filtro duro de qualidade, chunk ≤ ~500 tokens, chama o professor, grava JSONL com procedência | `scripts/gen_sft.py` | ✅ (30k rodando) |
-| **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ⬜ |
+| **SFT-2** | **Validador**: JSON ok, `evidencia` é substring do doc, resposta em pt, tamanho, dedup (MinHash) + split train/val/heldout **por documento** | `scripts/validate_sft.py` | ✅ |
 | **SFT-3** | **Treino**: `attention_mask` + padding no modelo, loss **só nos tokens da resposta**, packing com `<|end|>`, cosine curto, ckpt | `scripts/train_sft.py` (+ `pingo/model.py`) | ⬜ |
 | **SFT-4** | **Avaliação**: geração nos prompts do heldout, taxa de evidência/fidelidade, checar que a ppl do val do pré-treino não desabou (esquecimento catastrófico) | `scripts/sample.py --model <sft>` | ⬜ |
 | **SFT-5** | Opcional: misturar 10–20% de instruções gerais pt para o modelo não ficar "só respondedor de documentos" | — | ⬜ |
@@ -147,6 +148,17 @@ qualidade mais eficaz do pipeline (~48 vetoes em ~330 trechos), sem custo extra.
 - OSCAR é web cru: **spam/casino/SEO** passa nos filtros do pré-treino. Para o SFT o filtro
   de fonte tem que ser mais duro (tamanho, dígitos/palavra, links, boilerplate, parágrafos).
 - Amostrar **de `split=train`** sempre; `val` é a régua do pré-treino e não pode vazar.
+- **MinHash: amostre por HASH, nunca por posição.** Com trechos longos (~500 palavras) é
+  preciso limitar o nº de shingles; amostrar por posição com passo proporcional ao tamanho
+  (`words[i::step]`) desalinha os dois textos e um espelho com 2 palavras trocadas mede
+  Jaccard **0,38** (deveria ser ~0,99). Amostragem por hash (`h % step == 0`) seleciona os
+  mesmos shingles nos dois lados. No LSH, o bucket tem de ser **lista** (colisão não pode se
+  perder) e só se indexa o exemplo **aceito** (indexar antes do veredito deixa índices
+  órfãos em `signatures[i]`).
+- **Testes de script via `importlib`**: `spec.loader.exec_module(mod)` sem registrar em
+  `sys.modules` quebra `@dataclass` (`AttributeError: 'NoneType' object has no attribute
+  '__dict__'`). Faça `sys.modules[nome] = mod` antes do `exec_module` (ver
+  `tests/test_gen_sft.py` e `tests/test_validate_sft.py`).
 - **Desempenho medido do professor (2026-10-30, 8 slots, Qwen3.5-4B UD-Q4_K_XL)**:
   ~**160–175 tok/s agregados** (completion) com 8 concorrentes; cada par custa **~240
   completion tokens** (pergunta+resposta+evidência) e o **prompt do trecho de 2.000 chars
@@ -256,6 +268,16 @@ Feito:
   e 28 perguntas citando "o texto" (→ motivou o modo misto). **Piloto v2** (50/50):
   163 ancorados / 137 sem contexto, 0 duplicatas, 0 vazamentos, `menciona_fonte` barrou 37.
   Restos: `data/sft/pilot-v{1,2}.jsonl` + `.stats.json`.
+- ✅ **SFT-2 (validador + dedup + split) — 2026-10-30**: `scripts/validate_sft.py` + 19
+  testes (`tests/test_validate_sft.py`; suíte **77 verdes**). Revalida cada linha com as
+  regras compartilhadas agora em **`pingo/sft.py`** (o gerador importa de lá — nada de regra
+  duplicada), barra `(doc_id, chunk_idx)` repetido, quase-duplicata de **pergunta** (Jaccard
+  ≥0,80) e de **trecho** (≥0,85) via **MinHash + LSH** (sem dependência nova), e separa
+  `train/val/heldout` **por documento** com checagem de vazamento (se houver, o script sai
+  sem gravar). Saída em `data/sft/final/{train,val,heldout}.jsonl` + `stats.json` +
+  `rejects.jsonl`. ~**1.300 exemplos/s** (30k em ~25 s). Em 3.386 linhas reais: 21 barradas
+  (18 trechos espelhados — páginas de template e políticas de privacidade copiadas — e 3
+  perguntas quase iguais), 0 duplicado exato, splits ~90/5/5.
 
 ## Decisões de treino (Passo 6)
 
@@ -274,7 +296,8 @@ Feito:
 | ~~6~~ ✅ | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | ✅ val 2,507 estável; resume bit-exato |
 | ~~7~~ ✅ | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | ✅ pt coerente; ppl 11,67; KV cache 10,6–11,8× (B16) |
 | ~~SFT-1~~ ✅ | **Gerador do dataset** (30k pares, misto ancorado/closed-book), 21 testes | `scripts/gen_sft.py` | ✅ 2 pilotos auditados; volume rodando |
-| **SFT-2..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: validador → treino SFT → avaliação | `validate_sft.py`, `train_sft.py` | dataset auditado + modelo respondendo em formato |
+| ~~SFT-2~~ ✅ | **Validador**: revalida cada linha, dedup MinHash/LSH (pergunta e trecho) e split por documento sem vazamento | `scripts/validate_sft.py` | ✅ 77 testes; 1.300 ex/s |
+| **SFT-3..5** | **NOVO RUMO (ver seção "SFT — rumo novo")**: treino SFT → avaliação | `train_sft.py` (+ `pingo/model.py`) | modelo respondendo em formato |
 | ~~8~~ ⏸️ | **SUSPENSO**: escalar p/ Pingo-350M (decisão do usuário 2026-10-30) | `pingo/config.py` | — |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).
