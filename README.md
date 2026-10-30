@@ -88,7 +88,7 @@ completo, 6 shards). `meta.json` registra contagens/proveniência; `pingo/data.p
 - [x] **4.** Tokenização → shards binários train/val (uint16, memmap)
 - [x] **5.** Modelo (RoPE, MHA, SwiGLU, KV cache) + testes unitários — **127.555.456 params**, equivalência do cache `<1e-5`, overfit→0, roundtrip HF
 - [x] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis) — **2,75B tokens em 7,56 h** (~101k tok/s com `torch.compile`); val loss **9,69 → 2,507** (**ppl 12,3**), curva monótona, sem NaN; `--resume` bit-exato
-- [ ] **7.** Geração de texto + perplexidade de validação
+- [x] **7.** Geração + perplexidade de validação — **ppl 11,67** no val (3,54 bits/token); texto pt coerente em parágrafos com amostragem; KV cache **10,6× (ctx 1024) / 11,8× (ctx 2016)** mais rápido com batch 16 e mesmos tokens
 - [ ] 8. Escalar para ~350M
 - [ ] 9. Mid-training / SFT
 - [ ] 10. RLHF (DPO primeiro)

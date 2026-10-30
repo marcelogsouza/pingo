@@ -10,10 +10,13 @@ Ao iniciar uma sessão, leia isto primeiro. O plano completo está em [`PLAN.md`
 
 ## Onde estamos
 
-**Passo 6 CONCLUÍDO (2026-10-30) — Pingo-120M pré-treinado**. Próximo: **Passo 7**
-(perplexidade no val + geração + benchmark do KV cache). Checkpoint bom em
-`runs/pt-120m/final/` (val loss **2,507** / ppl **12,3**) — run de 5.248 steps, 2,75B
-tokens, **7,56 h**, 100,9k tok/s médio, curva de val monótona, zero NaN.
+**Passo 7 CONCLUÍDO (2026-10-30) — o Pingo-120M da Fase 1 está pronto e avaliado.**
+Próximo: **Passo 8** (escalar p/ ~350M). Modelo em `runs/pt-120m/final/` — ppl no val
+**11,67** (3,54 bits/token, 409.600 tokens), geração de pt coerente, KV cache 10,6–11,8×
+mais rápido em serving (B=16, ctx 1024–2016). Relatório completo em
+`runs/pt-120m/eval.json` (`scripts/sample.py` reproduz).
+Antes: Passo 6 fechado com val loss 2,507 / ppl 12,3 — 5.248 steps, 2,75B tokens,
+7,56 h, 100,9k tok/s, curva monótona, zero NaN.
 
 ### ▶️ Se você é uma NOVA sessão — siga nesta ordem
 
@@ -29,9 +32,11 @@ tokens, **7,56 h**, 100,9k tok/s médio, curva de val monótona, zero NaN.
    tokens ≈ 7,5 h; VRAM 18,8 GiB com compile (28,5 sem) de 32,6 GiB.
 4. **Se precisar parar/retomar**: `--resume` com os MESMOS args (inclusive `--max-steps`,
    que NÃO vai no ckpt e define o lr); `KeyboardInterrupt` salva ckpt.
-5. **Passo 7** (`scripts/sample.py`): perplexidade no val com o `final/`, geração
-   (`pingo/generate.py` já funciona e é testado) e o benchmark 10× do KV cache — este
-   último precisa de ctx longo para aparecer (ctx curto dá só ~1,8×).
+5. **Avaliação**: `uv run python scripts/sample.py` (ppl + amostras + bench do KV cache;
+   `--no-ppl` / `--no-bench` p/ encurtar, `--out` p/ JSON). 2–3 min na GPU.
+6. **Passo 8** (próximo, fora da Fase 1): escalar p/ **Pingo-350M** repetindo o pipeline
+   (os shards de 2,75B tokens já existem; ~350M×2,75B é undertrained — vale arrumar mais
+   tokens/Passo 9 antes). Nada foi começado ainda.
 
 Referência de leitura da curva (não entrar em pânico): init = 9,71; o val desceu
 5,02@250 → 3,17@1000 → 2,69@2750 → 2,51@5000 (bem melhor que os 3,2–3,9 que o plano
@@ -107,6 +112,12 @@ Feito:
   entra em loop de repetição — típico de 120M, assunto do Passo 7 (penalidade/typical).
   Vigia usado: script externo (lê `log.jsonl`, salva `best.pt`, SIGINT se o val piorar 2×
   seguidas ou der NaN) — mora fora do repo; se quiser, promover a `scripts/`.
+- ✅ **PASSO 7 FECHADO**: `scripts/sample.py` (ppl + amostras + bench do KV cache) e
+  `--repetition-penalty` em `pingo/generate.py` (`apply_repetition_penalty`, semântica HF).
+  Números no modelo final: **ppl 11,67 / 3,54 bits/token** (val, 409.600 tokens, ctx 2048,
+  rng fixo); amostras de pt em parágrafos coerentes; KV cache **5,8×/10,6×/11,8×**
+  (ctx 512/1024/2016, B=16) com **tokens idênticos** ao caminho naive. `tests/test_sample.py`
+  (6 testes; suíte **37 verdes**). Relatório em `runs/pt-120m/eval.json`.
 
 ## Decisões de treino (Passo 6)
 
@@ -122,8 +133,9 @@ Feito:
 
 | Passo | O que | Arquivos | Critério |
 |---|---|---|---|
-| **6** | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | val loss estável; resume reproduz a curva |
-| **7** | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | texto pt coerente; 10× mais rápido c/ KV cache |
+| ~~6~~ ✅ | Pré-treino: AdamW wd 0.1, warmup+cosine, clip 1.0, bf16, ~0.5M tok/batch global, ckpt 15 min + `--resume`, seed fixa | `scripts/train.py` | ✅ val 2,507 estável; resume bit-exato |
+| ~~7~~ ✅ | Geração + perplexidade val + `save_pretrained` | `scripts/sample.py` | ✅ pt coerente; ppl 11,67; KV cache 10,6–11,8× (B16) |
+| **8** | Escalar p/ **Pingo-350M** (mesma receita; precisa de mais tokens — 2,75B é pouco p/ 350M) | `pingo/config.py` | ppl no val melhor que o 120M na mesma régua |
 
 Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden 2304, ctx 2048).
 
@@ -189,8 +201,20 @@ Config default: **Pingo-120M** (12 camadas, d_model 896, 14 heads, SwiGLU hidden
   GPU (forward 120M, bench de geração, treino) precisa dele parado. Checar `nvidia-smi`
   antes de CUDA. (Desde 2026-10-29 o fluxo é: Opencode na nuvem + Strata derrubado p/
   treinar; ver "▶️ Se você é uma NOVA sessão" no topo.)
-- Speedup do KV cache em ctx curto (32–64 tokens, CPU) é só ~1,8×; o ganho de 10×+ do
-  critério do Passo 7 vem de ctx longo (geração longa) na GPU.
+- **KV cache: o ganho NÃO é em batch=1.** Medido na RTX (120M, 32 tokens novos):
+  B=1 dá ~0,8–1,9× (o decode é limitado por latência de kernel, não por FLOPs — recalcular
+  a sequência inteira sai quase de graça); **B=16 dá 5,8×@512, 10,6×@1024, 11,8×@2016**.
+  Ou seja: o critério "10×+" do plano é sobre throughput de serving, não latência
+  single-stream. Bench sempre compara os tokens gerados (`mesmos_tokens`) p/ não medir
+  coisa errada.
+- Bench com `ctx == max_position_embeddings` não gera nada (o cache para no limite e
+  `generate_naive` sai na hora) → `scripts/sample.py` corta o ctx para `max_ctx - n_new`
+  e marca `ctx_ajustado: true` no JSON.
+- Greedy em 120M **entra em loop de repetição** ("…está a ser implementado." em loop);
+  `generate(..., repetition_penalty=1.15)` resolve (default do `sample.py`).
+- `ppl` no val depende de quais janelas caem no rng fixo: 20 batches × B16 → 12,3;
+  25 batches × B8 → 11,67. Comparações entre runs são válidas, valores absolutos variam
+  ~5% com o nº de tokens amostrados.
 - **O lr NÃO é gravado no ckpt**: ele é recalculado por `lr_at(step, max_steps)` a cada
   step. Logo `--resume` tem que usar o **mesmo `--max-steps`** (e mesmo lr/warmup) do
   início, senão a curva de lr "salta" sem nenhum aviso (foi o que aconteceu num teste
