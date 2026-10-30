@@ -243,6 +243,11 @@ apagada de `~/.openrouter_key`; o script lê `OPENROUTER_API_KEY` ou `--key-file
 - O campo `evidencia` (cópia literal) é a única verificação automática barata de que o
   professor não inventou — **não remova do schema**.
 
+- **`--resume` engana o contador**: a barra do `tqdm` começa do zero (não soma o que já
+  estava no arquivo), então `bar.n` conta só os pares DESTE processo. Em 2026-10-30 14h33 a
+  barra dizia `5804/30000` com **8.959** linhas no arquivo (3.155 da fase anterior + 5.804
+  desta) e o ETA aparecia ~1 h maior que o real. Sempre conferir com `wc -l` no arquivo.
+
 Referência de leitura da curva (não entrar em pânico): init = 9,71; o val desceu
 5,02@250 → 3,17@1000 → 2,69@2750 → 2,51@5000 (bem melhor que os 3,2–3,9 que o plano
 estimava). NaN → cortar lr pela metade (1,5e-4) e recomeçar do zero. OOM → baixar B e
