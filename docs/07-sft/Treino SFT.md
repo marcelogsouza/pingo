@@ -127,6 +127,11 @@ sabe** qual é qual além do que está no prompt — a diferença é inteirament
 | Checkpoints | 15 min (`ckpt.pt` + `ckpt-prev.pt`) + **`best.pt` por val loss** |
 | Seed | 13 |
 
+> [!warning] Os defaults **não** são o que rodou de melhor
+> Com 3 épocas e `lr 1e-4` o modelo superajusta em ~200 steps e esquece o português (ppl 6,94×
+> no pré-treino). O run recomendado é **`--epochs 1 --lr 5e-5 --min-lr 5e-6`** — val mínimo no
+> fim e fator 1,91×. A curva e a comparação estão em [[Run do SFT-120M]].
+
 ## Resume determinístico sem guardar a ordem
 
 ```python

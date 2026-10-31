@@ -90,8 +90,8 @@ completo, 6 shards). `meta.json` registra contagens/proveniência; `pingo/data.p
 - [x] **6.** Loop de pré-treino (bf16, cosine, checkpoints retomáveis) — **2,75B tokens em 7,56 h** (~101k tok/s com `torch.compile`); val loss **9,69 → 2,507** (**ppl 12,3**), curva monótona, sem NaN; `--resume` bit-exato
 - [x] **7.** Geração + perplexidade de validação — **ppl 11,67** no val (3,54 bits/token); texto pt coerente em parágrafos com amostragem; KV cache **10,6× (ctx 1024) / 11,8× (ctx 2016)** mais rápido com batch 16 e mesmos tokens
 - [ ] 8. Escalar para ~350M
-- [ ] 9. Mid-training / SFT
-- [ ] 10. RLHF (DPO primeiro)
+- [x] **9.** SFT — dataset sintético de 30k pares (professor Qwen3.5-4B local), treino de instrução e avaliação: **formato 100%, F1 0,375, fidelidade 0,59**, ppl do pré-treino 1,91×
+- [ ] 10. SFT-5 (instruções gerais/replay de texto cru) e RLHF (DPO primeiro)
 - [ ] 11. Avaliação em benchmarks pt
 
 O plano detalhado, com decisões e critérios de aceite por etapa, está em [`PLAN.md`](PLAN.md).
@@ -119,6 +119,18 @@ uv run python -c "import torch; print(torch.cuda.is_available())"
 
 Os scripts de dados/tokenizer rodam em qualquer máquina; o treino usa uma GPU NVIDIA
 (testado com uma RTX PRO 4500 Blackwell 32 GB).
+
+### WebUI (chat no navegador)
+
+```bash
+uv run python scripts/webui.py            # http://127.0.0.1:8010
+```
+
+Uma página de chat em Flask que serve o **SFT** (`runs/sft-120m/final`) e o **base**
+(`runs/pt-120m/final`): streaming token a token, contexto opcional (mini-RAG) e os
+hiperparâmetros de amostragem. O prompt é exatamente o do treino
+(`<|user|>Pergunta: …<|assistant|>`), então o que você vê na tela é o modelo no seu melhor
+formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 
 ## Aviso
 

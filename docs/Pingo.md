@@ -119,7 +119,9 @@ flowchart LR
 - [[Validação, dedup e splits]] — MinHash/LSH na unha, split por documento
 - [[Juiz de recusas]] — a única classe que precisa de segunda opinião
 - [[Treino SFT]] — tokens de chat, `labels` deslocados, `attention_mask`, resize do embedding
+- [[Run do SFT-120M]] — os três runs, a curva do overfit e por que o v2 (1 época) é o que vale
 - [[Avaliação SFT]] — formato, F1, fidelidade, esquecimento catastrófico
+- [[WebUI]] — a tela de chat (Flask + SSE) para testar o modelo com o prompt do treino
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
@@ -132,7 +134,7 @@ flowchart LR
 
 ---
 
-## Estado do projeto (2026-10-30)
+## Estado do projeto (2026-10-31)
 
 ```mermaid
 flowchart LR
@@ -140,6 +142,7 @@ flowchart LR
     s5 --> s6["6 pré-treino"] --> s7["7 avaliação"]
     s7 --> s1g["SFT-1 gerador"]
     s1g --> s2v["SFT-2 validador"] --> s3t["SFT-3 treino"] --> s4e["SFT-4 avaliação"]
+    s4e --> ui["WebUI + SFT-5<br/>opcional"]
     s4e -.-> s8["8 · escalar p/ 350M<br/>suspenso"]
     style s1 fill:#c7f9cc,stroke:#2f9e44
     style s2 fill:#c7f9cc,stroke:#2f9e44
@@ -148,19 +151,25 @@ flowchart LR
     style s5 fill:#c7f9cc,stroke:#2f9e44
     style s6 fill:#c7f9cc,stroke:#2f9e44
     style s7 fill:#c7f9cc,stroke:#2f9e44
-    style s1g fill:#fff3bf,stroke:#f08c00
+    style s1g fill:#c7f9cc,stroke:#2f9e44
     style s2v fill:#c7f9cc,stroke:#2f9e44
-    style s3t fill:#e9ecef,stroke:#868e96,stroke-dasharray: 5 5
-    style s4e fill:#e9ecef,stroke:#868e96,stroke-dasharray: 5 5
+    style s3t fill:#c7f9cc,stroke:#2f9e44
+    style s4e fill:#c7f9cc,stroke:#2f9e44
+    style ui fill:#d0ebff,stroke:#1971c2
     style s8 fill:#ffe3e3,stroke:#c92a2a,stroke-dasharray: 5 5
 ```
 
 - ✅ **Fase 1 concluída**: Pingo-120M pré-treinado, avaliado, com backup *read-only* em
   `runs/pt-120m-BACKUP-2026-10-30/`.
-- ✅ **Dataset de SFT pronto** (`data/sft/sft-v1.jsonl`, **30.000 pares**, 78 MB, ~38
-  pares/min no professor local). Números e distribuição em [[Geração do dataset]].
-- ⬜ Falta: validar (`validate_sft.py --judge-recusas`) → treinar o SFT → avaliar. O treino
-  espera o dono derrubar o `llama.cpp`/Qwen da VRAM.
+- ✅ **Dataset de SFT pronto** (`data/sft/sft-v1.jsonl`, **30.000 pares**, 78 MB). Validado e
+  dividido em `data/sft/final/`: 26.479 treino / 1.581 val / 1.455 heldout, sem vazamento.
+- ✅ **SFT treinado e avaliado** — o run recomendado é `runs/sft-120m-ep1/final` (1 época,
+  `lr 5e-5`): formato 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino 1,91× (o run de 3
+  épocas ia a 6,94×). Números e amostras em [[Run do SFT-120M]].
+- ✅ **WebUI** em Flask para conversar com o modelo (`uv run python scripts/webui.py`, porta
+  8010) — [[WebUI]].
+- ⬜ Próximo: SFT-5 (instruções gerais/mistura de texto cru, para baixar o esquecimento e
+  ensinar recusa) e Passo 8 (**350M — suspenso**).
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer

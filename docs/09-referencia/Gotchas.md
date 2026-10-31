@@ -193,6 +193,13 @@ deixar a barra fechar produz `N + max_examples`: ia dar 33.154 pares; parei por 
 30.000. Para retomar contando o arquivo: `--max-examples $((30000 - $(wc -l < arq)))`.
 → [[Geração do dataset]]
 
+**SFT com 3 épocas e `lr 1e-4` superajusta em ~200 steps.** Em 2026-10-30 o run real (26.479
+exemplos, batch efetivo 32) teve val mínimo no **step 200** (2,02) e terminou em 2,16, com train
+loss 0,40 — e ppl **6,94×** no val do pré-treino. Com `--epochs 1 --lr 5e-5` o val desceu até o
+fim (1,76) e o fator caiu a **1,91×** com F1 igual. Regra prática para este dataset: **1 época,
+lr ≤ 5e-5**; se for mudar, olhe o val a cada 100 steps antes de deixar rodar.
+→ [[Run do SFT-120M]]
+
 **`SIGINT` no `gen_sft.py` grava o `stats.json`, mas o processo pode não morrer.** O laço para,
 o `finally` fecha o arquivo (nada mais é escrito) e o `stats.json` sai — porém as threads do pool
 podem ficar penduradas por minutos. Depois do `stats.json`, `SIGTERM` é seguro; só verifique com

@@ -10,7 +10,7 @@ Tudo via `uv run`. Ordem = ordem do projeto.
 ## Sanidade, sempre
 
 ```bash
-uv run pytest -q                                    # 103 testes, ~13 s
+uv run pytest -q                                    # 118 testes, ~13 s
 uv run python -c "import torch; print(torch.cuda.is_available())"
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv   # antes de qualquer CUDA
 ```
@@ -76,17 +76,23 @@ wc -l data/sft/sft-v1.jsonl                                               # conf
 uv run python scripts/validate_sft.py --judge-recusas
 cat data/sft/final/stats.json
 
-# SFT-3 · treinar (GPU)
+# SFT-3 · treinar (GPU) — o run RECOMENDADO é 1 época com lr 5e-5 (4min52s)
+uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 \
+    --warmup-steps 40 --eval-steps 100 --out runs/sft-120m-ep1
 uv run python scripts/train_sft.py --tiny --max-steps 20 --out /tmp/sft-tiny --device cpu
-uv run python scripts/train_sft.py                                        # run real
-uv run python scripts/train_sft.py --resume
+uv run python scripts/train_sft.py --resume                               # retomar
+# (3 épocas com lr 1e-4 superajusta: val mínimo no step 200 e ppl 6,94× no pré-treino)
 
-# SFT-4 · avaliar
-uv run python scripts/eval_sft.py --n 200 --judge
-cat runs/sft-120m/final/eval_sft.json
+# SFT-4 · avaliar (24 s sem juiz; --judge precisa do professor no ar)
+uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200
+cat runs/sft-120m-ep1/final/eval_sft.json
 
 # amostras do SFT (resolve o tokenizer de 16.387 sozinho)
 uv run python scripts/sample.py --model runs/sft-120m/final --no-bench
+
+# WebUI (chat no navegador; a 8000 desta máquina está ocupada → 8010)
+uv run python scripts/webui.py                      # http://127.0.0.1:8010
+uv run python scripts/webui.py --device cpu --port 8080
 ```
 
 ## Comparação de professores (opcional, custa centavos)
