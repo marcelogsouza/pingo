@@ -6,13 +6,15 @@ buffers pré-alocados + overflow, overfit de batch pequeno, generate() e
 roundtrip save_pretrained/from_pretrained.
 """
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn.functional as F
 
 from pingo.cache import PingoCache
 from pingo.config import PingoConfig
-from pingo.generate import generate, sample_next
+from pingo.generate import generate, generate_stream, sample_next
 from pingo.model import PingoLM, apply_rope
 
 
@@ -214,6 +216,55 @@ def test_generate_stochastic_seeds(tiny_model):
     a = generate(tiny_model, p, max_new_tokens=16, temperature=1.0, top_k=20, seed=42)
     b = generate(tiny_model, p, max_new_tokens=16, temperature=1.0, top_k=20, seed=42)
     assert torch.equal(a, b)
+
+
+class _Sequencia(torch.nn.Module):
+    """Stub que emite `seq` em ordem (um token por step) — para testar stop e streaming."""
+
+    def __init__(self, seq, ctx: int = 32):
+        super().__init__()
+        self.config = tiny_config(vocab_size=64, max_position_embeddings=ctx)
+        self.seq = seq
+        self.i = 0
+        self.dummy = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, ids, cache=None, **kw):
+        if cache is not None:  # imita PingoLM: escreve no cache e faz commit
+            zeros = torch.zeros(ids.shape[0], cache.n_heads, ids.shape[1], cache.head_dim)
+            cache.update(0, zeros, zeros)
+            cache.commit()
+        logits = torch.zeros(ids.shape[0], ids.shape[1], self.config.vocab_size)
+        logits[:, -1, self.seq[min(self.i, len(self.seq) - 1)]] = 5.0
+        self.i += 1
+        return SimpleNamespace(logits=logits)
+
+
+def test_generate_stream_equivale_a_generate(tiny_model):
+    """O gerador de streaming emite exatamente os mesmos tokens (mesmo RNG)."""
+    p = [5, 11, 23]
+    cheio = generate(tiny_model, p, max_new_tokens=10, temperature=0)[0].tolist()
+    novos = list(generate_stream(tiny_model, p, max_new_tokens=10, temperature=0))
+    assert novos == cheio[len(p):]
+    assert len(novos) == 10  # emite um por um, não tudo no fim
+    # prompt no limite do contexto (31 de 32): sai 1 token e o cache lota
+    assert len(list(generate_stream(tiny_model, [4] * 31, max_new_tokens=5,
+                                    temperature=0))) == 1
+    with pytest.raises(ValueError, match="não cabe"):
+        list(generate_stream(tiny_model, [4] * 32, max_new_tokens=5, temperature=0))
+
+
+def test_generate_stream_para_no_stop_e_emite_em_ordem():
+    """Com sequência controlada: emite na ordem, corta no stop (inclusive) como `generate`."""
+    assert list(generate_stream(_Sequencia([10, 20, 30, 40, 50]),
+                                [1, 2, 3], max_new_tokens=4, temperature=0)) == [10, 20, 30, 40]
+
+    com_stop = list(generate_stream(_Sequencia([10, 20, 30, 40, 50]), [1, 2, 3],
+                                    max_new_tokens=5, temperature=0, stop_token=30))
+    assert com_stop == [10, 20, 30], "o stop é emitido e encerra a geração"
+
+    out = generate(_Sequencia([10, 20, 30, 40, 50]), [1, 2, 3],
+                   max_new_tokens=5, temperature=0, stop_token=30)
+    assert out[0].tolist() == [1, 2, 3, 10, 20, 30]
 
 
 # ---------------------------------------------------------------- HF scaffolding

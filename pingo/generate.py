@@ -45,17 +45,8 @@ def apply_repetition_penalty(logits: torch.Tensor, seen_ids: torch.Tensor,
     return out
 
 
-@torch.no_grad()
-def generate(model, prompt_ids: list[int] | torch.Tensor, max_new_tokens: int = 128,
-             temperature: float = 1.0, top_k: int | None = None, top_p: float | None = None,
-             stop_token: int | None = None, seed: int | None = None,
-             repetition_penalty: float = 1.0) -> torch.Tensor:
-    """Retorna `[1, prompt+gerado]` (para no máximo `max_new_tokens` novos).
-
-    Para no contexto do modelo (cache pré-alocado com `max_position_embeddings`).
-    `repetition_penalty > 1` pune tokens já usados no prompt+geração (ver
-    `apply_repetition_penalty`); é o que evita o loop do greedy em 120M.
-    """
+def _prompt_tensor(prompt_ids: list[int] | torch.Tensor, model) -> torch.Tensor:
+    """Normaliza o prompt para `[1, n]` no device do modelo (batch=1 por ora)."""
     if isinstance(prompt_ids, list):
         prompt_ids = torch.tensor([prompt_ids], dtype=torch.long)
     elif prompt_ids.dim() == 1:
@@ -65,7 +56,21 @@ def generate(model, prompt_ids: list[int] | torch.Tensor, max_new_tokens: int = 
     prompt_ids = prompt_ids.to(next(model.parameters()).device)
     if prompt_ids.shape[1] >= model.config.max_position_embeddings:
         raise ValueError("prompt não cabe no contexto do modelo")
+    return prompt_ids
 
+
+@torch.no_grad()
+def generate_stream(model, prompt_ids: list[int] | torch.Tensor, max_new_tokens: int = 128,
+                    temperature: float = 1.0, top_k: int | None = None,
+                    top_p: float | None = None, stop_token: int | None = None,
+                    seed: int | None = None, repetition_penalty: float = 1.0):
+    """**Streaming**: igual a `generate`, mas emite cada token novo (`int`) na hora.
+
+    O token de parada é emitido e fecha o gerador — exatamente como em `generate`, cuja
+    saída já inclui o stop. Serve para a WebUI (SSE): o chamador decodifica um token por
+    vez em vez de esperar a resposta inteira.
+    """
+    prompt_ids = _prompt_tensor(prompt_ids, model)
     model.eval()
     if seed is not None:
         torch.manual_seed(seed)
@@ -82,8 +87,31 @@ def generate(model, prompt_ids: list[int] | torch.Tensor, max_new_tokens: int = 
             step_logits = apply_repetition_penalty(logits, torch.unique(ids[0]), repetition_penalty)
         nxt = sample_next(step_logits, temperature=temperature, top_k=top_k, top_p=top_p)
         ids = torch.cat((ids, nxt), dim=-1)
+        yield int(nxt)
         if stop_token is not None and int(nxt) == stop_token:
             break
         logits = model(nxt, cache=cache).logits[:, -1]
 
-    return ids
+
+@torch.no_grad()
+def generate(model, prompt_ids: list[int] | torch.Tensor, max_new_tokens: int = 128,
+             temperature: float = 1.0, top_k: int | None = None, top_p: float | None = None,
+             stop_token: int | None = None, seed: int | None = None,
+             repetition_penalty: float = 1.0) -> torch.Tensor:
+    """Retorna `[1, prompt+gerado]` (para no máximo `max_new_tokens` novos).
+
+    Para no contexto do modelo (cache pré-alocado com `max_position_embeddings`).
+    `repetition_penalty > 1` pune tokens já usados no prompt+geração (ver
+    `apply_repetition_penalty`); é o que evita o loop do greedy em 120M.
+
+    É um invólucro de `generate_stream`: mesma amostragem, mesma ordem de RNG.
+    """
+    prompt_ids = _prompt_tensor(prompt_ids, model)
+    novos = list(generate_stream(model, prompt_ids, max_new_tokens=max_new_tokens,
+                                 temperature=temperature, top_k=top_k, top_p=top_p,
+                                 stop_token=stop_token, seed=seed,
+                                 repetition_penalty=repetition_penalty))
+    if not novos:
+        return prompt_ids
+    extra = torch.tensor([novos], dtype=torch.long, device=prompt_ids.device)
+    return torch.cat((prompt_ids, extra), dim=-1)
