@@ -57,11 +57,21 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | 15:12 | `6a12418` | **vault `docs/`**: 38 notas (Obsidian) — a documentação explicativa do projeto |
 | 23:50 | `36164cb` | **dataset de SFT completo**: 30.000 pares em `data/sft/sft-v1.jsonl` (11h51 de retomada, 37,8 pares/min) |
 
-## O que estava rodando ao fim do dia 2
+## Madrugada — 2026-10-31: o SFT roda
 
-`scripts/gen_sft.py --max-examples 30000 --resume` gerando `data/sft/sft-v1.jsonl` a ~40
-pares/min ([[Geração do dataset]]). O vault que você está lendo foi escrito **enquanto o
-dataset era gerado**, justamente para ocupar a fila de trabalho sem brigar pela GPU.
+| Hora | Commit | O que aconteceu |
+|---|---|---|
+| 00:02 | — | **SFT v1** (3 épocas, lr 1e-4): 2.484 steps em 13 min. Val mínimo no step 200 e **6,94× de esquecimento** — overfit |
+| 00:09 | — | **SFT v2** (1 época, lr 5e-5): 828 steps em 4min52s, val 1,76, fator **1,91×** |
+| 00:11 | — | avaliação: formato 100%, F1 0,375, fidelidade 0,59 ([[Run do SFT-120M]]) |
+| 00:40 | `670b906` | **WebUI em Flask**: chat com streaming SSE, SFT + base, contexto opcional ([[WebUI]]) |
+
+## Como o dia 2 terminou
+
+O dataset de SFT fechou às 23h43 (30.000 pares, [[Geração do dataset]]) e a madrugada foi de
+treino: 13 min do run de 3 épocas, 4min52s do de 1 época, 24 s de avaliação e a WebUI em Flask
+([[Run do SFT-120M]], [[WebUI]]). Os três primeiros dias do projeto couberam em ~40 h de
+parede — com a maior parte delas gasta em geração de dados, não em GPU.
 
 ```mermaid
 flowchart LR
@@ -72,14 +82,16 @@ flowchart LR
         p6b["6 run 7,56 h<br/>5.248 steps"]
     end
     subgraph "2026-10-30 07h → 15h"
-        p7["7 avaliação"] --> sft1["SFT-1"] --> sft2["SFT-2"] --> sft3["SFT-3"] --> sft4["SFT-4"] --> ds["gerando 30k pares"]
+        p7["7 avaliação"] --> sft1["SFT-1"] --> sft2["SFT-2"] --> sft3["SFT-3"] --> sft4["SFT-4"] --> ds["30k pares"]
+    end
+    subgraph "2026-10-31 madrugada"
+        sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
     p6a --> p6b --> p7
 
     classDef feito fill:#c7f9cc,stroke:#2f9e44,color:#000
     classDef rodando fill:#fff3bf,stroke:#f08c00,color:#000
-    class p1,p2,p3,p4,p5,p6a,p6b,p7,sft1,sft2,sft3,sft4 feito
-    class ds rodando
+    class p1,p2,p3,p4,p5,p6a,p6b,p7,sft1,sft2,sft3,sft4,ds,sft5,wui feito
 ```
 
 ## Lições de processo que o `git log` mostra
