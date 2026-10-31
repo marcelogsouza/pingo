@@ -20,20 +20,21 @@ está no `git log`.
 steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente, KV cache
 5,8–11,8× (B=16). Suíte: **103 testes verdes**.
 
-**Agora: SFT.** O código do pipeline está inteiro escrito e testado; falta **rodar**:
+**Agora: SFT.** O dataset está pronto e o pipeline inteiro escrito e testado; falta **rodar**
+validação → treino → avaliação:
 
 | Passo | Comando | Estado |
 |---|---|---|
-| gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | 🔄 rodando (~20,8k/30k em 30/10 19h45; 38,7 pares/min → ETA ~4 h) |
-| conferir | `wc -l data/sft/sft-v1.jsonl` | alvo 30000 |
-| validar | `uv run python scripts/validate_sft.py --judge-recusas` | ⬜ ~30 s + ~2 min de juiz → `data/sft/final/` |
+| gerar 30k pares | `uv run python scripts/gen_sft.py --max-examples 30000 --out data/sft/sft-v1.jsonl --resume` | ✅ **30.000** pares em `data/sft/sft-v1.jsonl` (78 MB) |
+| validar | `uv run python scripts/validate_sft.py --judge-recusas` | ⬜ **próximo** — ~30 s + ~2 min de juiz → `data/sft/final/` |
 | treinar | `uv run python scripts/train_sft.py` | ⬜ ~1–2 h GPU → `runs/sft-120m/` |
 | avaliar | `uv run python scripts/eval_sft.py --n 200 --judge` | ⬜ depois do treino |
 
-- O gerador é **retomável e idempotente** (repetir o comando continua de onde parou). A barra
-  do `tqdm` conta **só os pares do processo atual** → confie no `wc -l`, não na barra.
-- O validador tolera arquivo em escrita (linha truncada é descartada), mas o treino só faz
-  sentido com o arquivo completo.
+- Dataset (conferido em 30/10 23h45): 30.000 linhas, todas JSON válido, 14 perguntas
+  duplicadas; 3.417 trechos rejeitados (12 motivos); extração 18.388 · explicação 7.401 ·
+  recusa 2.279 · resumo 1.932; ancorado 16.006 / livre 13.994.
+- O teto `--max-examples` é **por processo**: com `--resume` o arquivo passa do alvo (foi o
+  que aconteceu — parei em 30.000 pelo `wc -l`, não pela barra).
 - Depois do SFT-4: SFT-5 (opcional, instruções gerais) e Passo 8 (**350M — suspenso**), como
   em `PLAN.md`.
 

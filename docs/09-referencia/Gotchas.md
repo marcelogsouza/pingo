@@ -186,8 +186,17 @@ reprovava pergunta curta legítima. Agora conta stopwords **+** palavras acentua
 **O modo misto muda duas regras.** Sem contexto, a pergunta não pode citar
 "texto/trecho/documento/artigo/fonte" e a recusa tem outra frase.
 
-**`--resume` do `gen_sft.py` engana o contador do `tqdm`.** A barra conta só os pares deste
-processo. Em 2026-10-30 marcava 5.804 com **8.959** linhas no arquivo. Confira com `wc -l`.
+**`--resume` do `gen_sft.py` engana o contador do `tqdm` — e o teto é por processo.** A barra
+conta só os pares deste processo. Em 2026-10-30 marcava 5.804 com **8.959** linhas no arquivo.
+Confira com `wc -l`. Como `--max-examples` limita só o que **este** processo aceita, retomar e
+deixar a barra fechar produz `N + max_examples`: ia dar 33.154 pares; parei por `wc -l` em
+30.000. Para retomar contando o arquivo: `--max-examples $((30000 - $(wc -l < arq)))`.
+→ [[Geração do dataset]]
+
+**`SIGINT` no `gen_sft.py` grava o `stats.json`, mas o processo pode não morrer.** O laço para,
+o `finally` fecha o arquivo (nada mais é escrito) e o `stats.json` sai — porém as threads do pool
+podem ficar penduradas por minutos. Depois do `stats.json`, `SIGTERM` é seguro; só verifique com
+`wc -l` que a contagem parou onde você queria.
 
 **Scripts importados via `importlib` precisam de `sys.modules[nome] = mod`.** Sem isso,
 `@dataclass` estoura `AttributeError: 'NoneType' object has no attribute '__dict__'`.

@@ -157,9 +157,10 @@ flowchart LR
 
 - ✅ **Fase 1 concluída**: Pingo-120M pré-treinado, avaliado, com backup *read-only* em
   `runs/pt-120m-BACKUP-2026-10-30/`.
-- 🔄 **Gerando o dataset de SFT** (`data/sft/sft-v1.jsonl`, meta 30.000 pares, ~69% em
-  2026-10-30 19h45, ~39 pares/min). O gerador é retomável: `--resume`.
-- ⬜ Falta: validar → treinar o SFT → avaliar.
+- ✅ **Dataset de SFT pronto** (`data/sft/sft-v1.jsonl`, **30.000 pares**, 78 MB, ~38
+  pares/min no professor local). Números e distribuição em [[Geração do dataset]].
+- ⬜ Falta: validar (`validate_sft.py --judge-recusas`) → treinar o SFT → avaliar. O treino
+  espera o dono derrubar o `llama.cpp`/Qwen da VRAM.
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer

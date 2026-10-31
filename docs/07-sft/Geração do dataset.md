@@ -163,10 +163,17 @@ Até **3 tentativas** por trecho (`--tries`), sorteando tipo e modo novos a cada
   reconstruído relendo o arquivo, para não estourar o teto ao retomar.
 - `KeyboardInterrupt` para limpo: o que foi aceito já está no disco.
 
-> [!bug] `--resume` engana o contador do `tqdm`
+> [!bug] `--resume` engana o contador do `tqdm` — e o teto é **por processo**
 > A barra começa do zero: conta só os pares **deste** processo. Em 2026-10-30 14h33 ela marcava
 > `5804/30000` com **8.959** linhas no arquivo (3.155 da fase anterior + 5.804 desta) e o ETA
 > aparecia ~1 h maior que o real. **Sempre confira com `wc -l`.**
+>
+> Consequência de projeto: como `--max-examples` limita só os pares **aceitos pelo processo
+> atual**, retomar um arquivo que já tem *N* linhas e deixar a barra fechar produz `N + 30000`.
+> No run de 30/10 isso ia gerar ~33.154 pares; o processo foi interrompido (`SIGINT` → bloco
+> `finally` grava o `stats.json`) quando o `wc -l` cruzou 30.000 — sobrou 1 linha a mais, que
+> foi cortada à mão. Para retomar de verdade contando o que já existe, o certo é
+> `--max-examples $((30000 - $(wc -l < arquivo)))`.
 
 ## 8 · O que o `stats.json` registra
 
@@ -190,6 +197,32 @@ Até **3 tentativas** por trecho (`--tries`), sorteando tipo e modo novos a cada
 
 O que a auditoria manual encontrou: **spam adulto e de pirataria** (→ blocklist), **28 perguntas
 citando "o texto"** (→ modo misto) e respostas que copiavam a pergunta.
+
+### O run dos 30.000 (fim do dia 2)
+
+Duas fases: **3.154** pares na primeira e **26.846** numa retomada de 11 h 51 min no professor
+local Qwen3.5-4B (8 slots), até o arquivo fechar em **30.000**.
+
+| | retomada final (30/10 11h52 → 23h43) |
+|---|---|
+| pares aceitos | 26.846 (3.154 + 26.846 = **30.000**, 78 MB) |
+| trechos processados | 30.263 |
+| trechos rejeitados | 3.417 |
+| tokens do professor | 6,98 M de resposta / 35,3 M de prompt |
+| duração | 42.650 s · **37,8 pares/min** · 163,7 tok/s agregados |
+
+Motivos de rejeição acumulados na retomada (o contador é por motivo, um trecho pode somar
+vários): `evidencia_nao_literal` 10.758 · `fonte_invalida` 5.810 · `menciona_fonte` 4.255 ·
+`nao_pt` 318 · `pergunta_ruim` 280 · `pergunta_duplicada` 264 · `json_invalido` 233 ·
+`evidencia_vazia` 48 · erros de rede 3.
+
+Distribuição final por tipo: extração **18.388** · explicação **7.401** · recusa **2.279** ·
+resumo **1.932**; por modo: ancorado **16.006** / livre **13.994**. Perguntas duplicadas: 14
+(0,05%). Respostas: p50 102 chars, p90 258.
+
+O teto por domínio (`domain_cap_frac` 5% → 1.500 pares) **nunca entrou em ação**: o domínio
+mais produtivo rendeu 69 pares. Nenhuma linha truncada — o `flush()` por trecho garante que a
+interrupção (`SIGINT`) não deixa lixo, e o `stats.json` é gravado no `finally`.
 
 ## Ver também
 
