@@ -6,9 +6,9 @@ atualizado: 2026-10-30
 
 # Linha do tempo
 
-A história real do projeto, reconstruída a partir do `git log`. **28 commits entre 2026-10-29
-11h58 e 2026-10-30 15h12** — o projeto inteiro (dados → pré-treino → pipeline de SFT) levou
-pouco mais de **27 horas de parede**, sendo ~7,6 h de treino de GPU.
+A história real do projeto, reconstruída a partir do `git log`. **31 commits entre 2026-10-29
+11h58 e 2026-10-30 23h55** — o projeto inteiro (dados → pré-treino → dataset de SFT) levou ~36
+horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset no professor local.
 
 > [!note] Como ler os hashes
 > Os hashes são os do `main` nesta máquina. `docs:` = atualização do estado (`AGENTS.md`/
@@ -55,6 +55,7 @@ pouco mais de **27 horas de parede**, sendo ~7,6 h de treino de GPU.
 | 14:31 | `ac9132c` | comparação de professores remotos (OpenRouter) + script de piloto |
 | 14:33 | `0680744` | gotcha do `--resume` no contador do `tqdm` |
 | 15:12 | `6a12418` | **vault `docs/`**: 38 notas (Obsidian) — a documentação explicativa do projeto |
+| 23:50 | `36164cb` | **dataset de SFT completo**: 30.000 pares em `data/sft/sft-v1.jsonl` (11h51 de retomada, 37,8 pares/min) |
 
 ## O que estava rodando ao fim do dia 2
 
