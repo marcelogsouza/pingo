@@ -123,8 +123,12 @@ Os scripts de dados/tokenizer rodam em qualquer máquina; o treino usa uma GPU N
 ### WebUI (chat no navegador)
 
 ```bash
-uv run python scripts/webui.py            # http://127.0.0.1:8010
+uv run python scripts/webui.py            # http://127.0.0.1:8010 e http://<ip-da-lan>:8010
+uv run python scripts/webui.py --host 127.0.0.1   # só esta máquina
 ```
+
+O host padrão é `0.0.0.0`, então dá para abrir de outra máquina da rede local; **não há
+autenticação** — mantenha na LAN.
 
 Uma página de chat em Flask que serve o **SFT** (`runs/sft-120m/final`) e o **base**
 (`runs/pt-120m/final`): streaming token a token, contexto opcional (mini-RAG) e os

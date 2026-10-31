@@ -14,18 +14,22 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
   outra pergunta enquanto o modelo está no meio de uma resposta.
 
 Uso:
-  uv run python scripts/webui.py                      # http://127.0.0.1:8010
+  uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
+  uv run python scripts/webui.py --host 127.0.0.1     # só esta máquina
   uv run python scripts/webui.py --device cpu --port 8080
   uv run python scripts/webui.py --sft runs/sft-120m-ep1/final --base runs/pt-120m/final
 
-A porta padrão é **8010** (a 8000 desta máquina vive ocupada) e o servidor é o de
-desenvolvimento do Flask: use só em `localhost`, não exponha na rede.
+A porta padrão é **8010** (a 8000 desta máquina vive ocupada) e o host padrão é `0.0.0.0`:
+o chat responde na rede local (ex.: `http://192.168.0.101:8010`). **Não há autenticação** —
+qualquer um na mesma rede pode usar o modelo; `--host 127.0.0.1` fecha de novo. O servidor é
+o de desenvolvimento do Flask: serve para LAN doméstica, não para a internet.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sys
 import threading
 import time
@@ -291,12 +295,25 @@ def stream(carregado: Loaded, ids: list[int], params: dict,
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--host", default="0.0.0.0",
+                   help="0.0.0.0 = LAN; 127.0.0.1 = só esta máquina")
     p.add_argument("--port", type=int, default=8010)
     p.add_argument("--device", default="auto", choices=("auto", "cuda", "cpu"))
     p.add_argument("--sft", type=Path, default=ROOT / "runs" / "sft-120m-ep1" / "final")
     p.add_argument("--base", type=Path, default=ROOT / "runs" / "pt-120m" / "final")
     return p.parse_args(argv)
+
+
+def ip_da_lan() -> str | None:
+    """IP da interface que fala com o resto da rede (o UDP não chega a sair da máquina)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))   # só escolhe a rota; nenhum pacote é enviado
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
 
 
 def main(argv=None) -> None:
@@ -306,8 +323,15 @@ def main(argv=None) -> None:
                     device=args.device)
     if not server.specs:
         sys.exit("nenhum checkpoint de SFT nem de base em runs/")
-    print(f"Pingo WebUI em http://{args.host}:{args.port} — device {server.device} — "
-          f"modelos: {', '.join(server.specs)}")
+    print(f"Pingo WebUI — device {server.device} — modelos: {', '.join(server.specs)}")
+    print(f"  local:      http://127.0.0.1:{args.port}")
+    if args.host in ("0.0.0.0", "::"):
+        lan = ip_da_lan()
+        print(f"  na rede:    http://{lan}:{args.port}" if lan
+              else "  na rede:    (sem interface de rede detectada)")
+        print("  atenção:    sem autenticação — qualquer um na mesma rede usa o modelo")
+    else:
+        print(f"  escutando:  {args.host}:{args.port} (só este host)")
     create_app(server).run(host=args.host, port=args.port, threaded=True,
                            debug=False, use_reloader=False)
 

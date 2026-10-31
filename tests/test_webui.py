@@ -78,6 +78,14 @@ def _eventos(corpo: str) -> list[tuple[str, dict]]:
 # ------------------------------------------------------------------ servidor
 
 
+def test_padrao_escuta_na_lan_e_porta_8010():
+    """O chat é para ser aberto de outra máquina: bind em 0.0.0.0 (e 127.0.0.1 fecha)."""
+    args = w.parse_args([])
+    assert args.host == "0.0.0.0" and args.port == 8010
+    assert w.parse_args(["--host", "127.0.0.1"]).host == "127.0.0.1"
+    assert w.ip_da_lan() is None or w.ip_da_lan().count(".") == 3
+
+
 def test_specs_ignoram_diretorio_inexistente(tmp_path):
     servidor = w.Server([w.ModelSpec("nada", "x", tmp_path / "nao-existe", True)], device="cpu")
     assert servidor.specs == {}

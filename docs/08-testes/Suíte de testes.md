@@ -7,10 +7,10 @@ atualizado: 2026-10-30
 # Suíte de testes
 
 ```bash
-uv run pytest -q      # 118 passed in ~13 s (medido em 2026-10-30)
+uv run pytest -q      # 119 passed in ~13 s (medido em 2026-10-30)
 ```
 
-**118 casos coletados de 110 funções de teste** em 11 arquivos. Tudo roda em **CPU** (config
+**119 casos coletados de 111 funções de teste** em 11 arquivos. Tudo roda em **CPU** (config
 tiny, tempo curto) — a GPU não é necessária para validar o código, só para treinar.
 
 ## Por arquivo
@@ -27,7 +27,7 @@ tiny, tempo curto) — a GPU não é necessária para validar o código, só par
 | `test_validate_sft.py` | 24 | evidência tolerante a whitespace, `is_pt` curto, contrato do exemplo, shingles/Jaccard, **LSH acha quase-duplicata**, LSH barra trecho republicado, **não indexa rejeitados**, split determinístico por doc, ponta a ponta, idempotência dos tokens de chat, `render`, juiz fake |
 | `test_train_sft.py` | 9 | **collate desloca labels** e mascara prompt/pad, loss ignora prompt/padding, padding não contamina posições reais, **resize na média + re-tie**, tokens de chat estáveis, descarte por tamanho, ckpt/best/final/log, **resume bit-exato**, dataset vazio avisa |
 | `test_eval_sft.py` | 12 | F1 extremos/caixa, `apoio` com stem, limpeza de tokens de chat, recusa por modo, `terminou`, agregação sem contaminar com `None`, lista vazia, resolve tokenizer do modelo, ponta a ponta com modelo tiny |
-| `test_webui.py` | 13 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior |
+| `test_webui.py` | 14 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior |
 
 ## Os cinco testes que valem por uma tarde de debugging
 

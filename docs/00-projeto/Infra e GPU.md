@@ -16,7 +16,7 @@ atualizado: 2026-10-30
 | Transformers | ≥ 5.22 (**v5**) | só scaffold (`PreTrainedModel`, `PretrainedConfig`) |
 | Tokenizers | ≥ 0.23 | BPE byte-level |
 | Dados | `pyarrow`, `zstandard`, `datasets`, `huggingface_hub` | parquet + `.zst` + Hub |
-| Testes | `pytest` (grupo `dev`) | 118 testes, todos rodáveis em CPU |
+| Testes | `pytest` (grupo `dev`) | 119 testes, todos rodáveis em CPU |
 
 > [!warning] `requests` **não** está instalado
 > Todo HTTP (professor, OpenRouter, download) usa `urllib.request`. Não adicionar dependência

@@ -11,10 +11,15 @@ Uma página de chat em `localhost` para conversar com o Pingo sem escrever códi
 hiperparâmetros de amostragem à mão.
 
 ```bash
-uv run python scripts/webui.py                     # http://127.0.0.1:8010
+uv run python scripts/webui.py                     # 0.0.0.0:8010 (LAN + localhost)
+uv run python scripts/webui.py --host 127.0.0.1    # só esta máquina
 uv run python scripts/webui.py --device cpu --port 8080
-uv run python scripts/webui.py --sft runs/sft-120m/final --base runs/pt-120m/final
+uv run python scripts/webui.py --sft runs/sft-120m-ep1/final --base runs/pt-120m/final
 ```
+
+O host padrão é `0.0.0.0`: a página responde **na rede local** — nesta máquina,
+`http://192.168.0.101:8010` (o script imprime o IP no start, via truque do socket UDP, que
+não envia pacote nenhum).
 
 É a única parte do projeto que usa **Flask** (`uv add flask` → 3.1.3). O resto continua
 PyTorch + tokenizers.
@@ -74,7 +79,10 @@ vez de brigar por memória.
 
 ## Limites conhecidos
 
-- É o **servidor de desenvolvimento** do Flask: `localhost`, sem auth, sem TLS. Não exponha.
+- É o **servidor de desenvolvimento** do Flask, **sem autenticação e sem TLS**: qualquer um na
+  mesma rede que abrir a porta 8010 usa o modelo (e o `429` só limita a *uma* geração por vez).
+  Serve para LAN doméstica; não faça port-forward disso para a internet. Para fechar de novo:
+  `--host 127.0.0.1`.
 - **Sem memória de conversa**: cada pergunta é independente (o modelo não tem contexto de
   turnos anteriores; o histórico na tela é só visual).
 - 120M erra fato com naturalidade ("São Paulo, no estado do Rio de Janeiro") e responde

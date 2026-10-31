@@ -20,7 +20,7 @@ está no `git log`.
 steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente, KV cache
 5,8–11,8× (B=16). **SFT concluído**: `runs/sft-120m-ep1/final/` (1 época, lr 5e-5) — formato
 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino **1,91×**. WebUI em Flask para conversar
-com ele. Suíte: **118 testes verdes**.
+com ele. Suíte: **119 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
@@ -29,7 +29,7 @@ com ele. Suíte: **118 testes verdes**.
 | dataset | `data/sft/final/` (26.479/1.581/1.455) | ✅ validado, sem vazamento |
 | SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
 | avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
-| WebUI | `uv run python scripts/webui.py` → `http://127.0.0.1:8010` | ✅ SFT + base, streaming |
+| WebUI | `uv run python scripts/webui.py` → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming |
 
 - **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas
   esquece o português (fator 6,94× contra 1,91×). Ficou como contraexemplo em
@@ -43,9 +43,10 @@ com ele. Suíte: **118 testes verdes**.
 
 1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
-2. `uv run pytest -q` → **118 verdes** (CPU, ~13 s).
-3. `uv run python scripts/webui.py` e abra `http://127.0.0.1:8010`: se o chat responder, o
-   modelo e a GPU estão de pé. (A porta 8000 desta máquina é de outra aplicação.)
+2. `uv run pytest -q` → **119 verdes** (CPU, ~13 s).
+3. `uv run python scripts/webui.py` e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
+   imprime): se o chat responder, o modelo e a GPU estão de pé. (A porta 8000 desta máquina é
+   de outra aplicação; o host padrão é `0.0.0.0`, **sem autenticação**.)
 4. `curl -s localhost:8001/v1/models` → só é preciso se você for usar `--judge` ou regerar
    dataset. Deve devolver o `Qwen3.5-4B-GGUF`; se não houver nada, **peça ao usuário para subir
    o professor** (o script mora em `~/llm_serving_scripts/`, fora do repo — não suba servidor
