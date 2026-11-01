@@ -21,7 +21,7 @@ from tokenizers import Regex, Tokenizer, models, pre_tokenizers
 from pingo.config import PingoConfig
 from pingo.didatic import (MAX_LAB_TOKENS, TabelaEmbeddings, buscar, bytes_para_superficie,
                            categoria, especial_ids, ficha_bloco, ficha_lmhead, faixa_de,
-                           superficie_para_bytes, texto_legivel, tokenizar)
+                           menu_amostra, superficie_para_bytes, texto_legivel, tokenizar)
 from pingo.model import PingoLM
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -344,6 +344,110 @@ def test_ficha_lmhead_fora_da_frase_e_erro_claro(tmp_path):
         ficha_lmhead(final, ids, tabela.id_para_token, 9)
     with pytest.raises(IndexError):
         ficha_lmhead(final, ids[:2], tabela.id_para_token, 0)   # ids mais curto que a captura
+
+
+# ------------------------------------------------------------------ amostragem (passo ⑥)
+
+ID_PARA_TOKEN = {i: t for t, i in VOCAB.items()}
+
+
+def _linha(**notas):
+    """Uma linha de logits do vocab fake: os tokens citados levam nota, os demais −10."""
+    linha = torch.full((len(VOCAB),), -10.0)
+    for tok, v in notas.items():
+        linha[VOCAB[tok]] = float(v)
+    return linha
+
+
+def test_menu_amostra_a_roleta_fecha_em_360_graus():
+    linha = _linha(oi=2, mundo=1, **{"2028": 0, ",": -1})
+    d = menu_amostra(linha, [], ID_PARA_TOKEN)
+    assert d["acao"] == "menu" and "sorteado" not in d
+    assert d["retidos"] == len(VOCAB) and d["outros"] is None   # T=1 sem filtro: todos giram
+    graus = sum(c["graus"] for c in d["candidatos"])
+    assert abs(graus - 360.0) < 0.6                            # a roda é fechada, em graus
+    assert [c["prob"] for c in d["candidatos"]] == sorted((c["prob"] for c in d["candidatos"]),
+                                                          reverse=True)
+    m = d["maior"]
+    assert m["id"] == VOCAB["oi"] and m["rank"] == 1 and m["kind"] == "continuação"
+    assert m["graus"] == round(360.0 * m["prob"], 2)
+    assert m["p_bruto"] == pytest.approx(m["prob"])            # sem filtro, menu = bruto
+
+
+def test_menu_amostra_t_zero_e_uma_fatia_sozinha():
+    linha = _linha(oi=2, mundo=1)
+    d = menu_amostra(linha, [], ID_PARA_TOKEN, temperatura=0)
+    assert d["retidos"] == 1
+    c = d["candidatos"][0]
+    assert c["id"] == VOCAB["oi"] and c["prob"] == 1.0 and c["graus"] == 360.0
+    assert menu_amostra(linha, [], ID_PARA_TOKEN, temperatura=0,
+                        acao="girar")["sorteado"]["id"] == VOCAB["oi"]
+
+
+def test_menu_amostra_o_filtro_da_sementeira_como_sample_next():
+    """A roleta tem de ser a MESMA conta do chat: compara a sementeira do `sample_next`."""
+    from pingo.generate import sample_next
+    torch.manual_seed(0)
+    linha = torch.randn(len(VOCAB)) * 4
+    for t, k, p in [(1.0, 0, 0.9), (0.5, 4, 1.0), (2.0, 8, 0.95)]:
+        d = menu_amostra(linha, [], ID_PARA_TOKEN, temperatura=t, top_k=k, top_p=p)
+        esperado = []
+        for _ in range(300):
+            esperado.append(int(sample_next(linha[None], temperature=t, top_k=k or None,
+                                            top_p=p)))
+        girados = set(esperado)
+        menus = {c["id"] for c in d["candidatos"]}
+        assert girados <= menus                                   # roda nunca sai do filtro
+        assert len(girados) >= 2                                  # e não virou guloso
+        if p < 1.0:                                               # top-p: o menor prefixo que soma p
+            pp = (linha / t).softmax(-1).sort(descending=True).values
+            m = int((torch.cumsum(pp, 0) - pp < p).sum())         # o mesmo critério do keep
+            assert d["retidos"] == m
+
+
+def test_menu_amostra_semente_repete_o_giro_e_top_k_segura_o_menu():
+    linha = torch.arange(len(VOCAB), dtype=torch.float32) - 7
+    menus = {c["id"] for c in menu_amostra(linha, [], ID_PARA_TOKEN, top_k=3)["candidatos"]}
+    assert menus == {VOCAB["."], VOCAB["não"], VOCAB[","]}        # os 3 logits maiores
+    saidos = set()
+    for seed in range(12):
+        d = menu_amostra(linha, [], ID_PARA_TOKEN, top_k=3, acao="girar", seed=seed)
+        assert d["retidos"] == 3 and d["sorteado"]["modo"] == "roleta"
+        assert d["sorteado"]["id"] in menus
+        saidos.add(d["sorteado"]["id"])
+    assert len(saidos) >= 2                                       # a roda gira mesmo
+    a = menu_amostra(linha, [], ID_PARA_TOKEN, top_k=3, acao="girar", seed=5)
+    b = menu_amostra(linha, [], ID_PARA_TOKEN, top_k=3, acao="girar", seed=5)
+    assert a["sorteado"]["id"] == b["sorteado"]["id"]             # mesma semente, mesmo giro
+    assert a["semente"] == 5
+
+
+def test_menu_amostra_forcar_obedece_ate_fora_do_filtro():
+    linha = _linha(oi=3, mundo=2, **{"2028": 1})
+    d = menu_amostra(linha, [], ID_PARA_TOKEN, top_k=1, acao="forcar", force=VOCAB["2028"])
+    assert d["retidos"] == 1 and d["candidatos"][0]["id"] == VOCAB["oi"]
+    s = d["sorteado"]
+    assert s["id"] == VOCAB["2028"] and s["modo"] == "mão"
+    assert s["dentro"] is False and s["prob"] == 0.0              # fatia 0°: o filtro cortou
+    assert s["p_bruto"] > 0                                       # mas a nota existia
+    assert s["rank"] > d["retidos"]                               # e o posto denuncia o corte
+    com_rep = menu_amostra(linha, [VOCAB["oi"]], ID_PARA_TOKEN, repeticao=2.0,
+                           acao="forcar", force=VOCAB["oi"])
+    assert com_rep["candidatos"][0]["id"] != VOCAB["oi"]          # penalidade vale no menu todo
+
+
+def test_menu_amostra_valida_acoes_e_a_penalidade_pune_quem_repete():
+    linha = _linha(oi=3, mundo=3)
+    with pytest.raises(ValueError):
+        menu_amostra(linha, [], ID_PARA_TOKEN, acao="amassar")
+    with pytest.raises(IndexError):
+        menu_amostra(linha, [], ID_PARA_TOKEN, acao="forcar", force=999)
+    with pytest.raises(IndexError):
+        menu_amostra(linha, [], ID_PARA_TOKEN, acao="forcar")
+    punido = menu_amostra(linha, [VOCAB["oi"]], ID_PARA_TOKEN, repeticao=2.0)
+    livre = menu_amostra(linha, [], ID_PARA_TOKEN, repeticao=1.0)
+    nota = {c["id"]: c["prob"] for c in punido["candidatos"]}
+    assert nota[VOCAB["oi"]] < {c["id"]: c["prob"] for c in livre["candidatos"]}[VOCAB["oi"]]
 
 
 # ------------------------------------------------------------------ busca

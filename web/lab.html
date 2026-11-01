@@ -1,7 +1,7 @@
 <!doctype html>
-<!-- Modo didático do Pingo — passos ①–⑤: do texto ao id, ao vetor, à atenção, ao bloco e
-     aos logits do lm head. Servida em /lab pela WebUI (scripts/webui.py); a lógica vem de
-     pingo/didatic.py. -->
+<!-- Modo didático do Pingo — passos ①–⑥: do texto ao id, ao vetor, à atenção, ao bloco,
+     aos logits do lm head e à roleta da amostragem. Servida em /lab pela WebUI
+     (scripts/webui.py); a lógica vem de pingo/didatic.py. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -160,6 +160,7 @@
   .mchip.on{background:var(--accent-dim);border-color:#2b4d8f;box-shadow:inset 0 0 0 1px #2b4d8f}
   /* passo ③: RoPE + atenção */
   .cams{display:inline-flex;gap:4px;flex-wrap:wrap}
+  #attok{max-width:50vw}
   .cams button{font:11.5px var(--mono);color:var(--muted);background:var(--bg2);
     border:1px solid var(--line);border-radius:7px;padding:4px 8px;cursor:pointer}
   .cams button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
@@ -187,6 +188,33 @@
   .nnum{font:11px var(--mono);color:var(--muted);min-width:46px;text-align:right}
   canvas.faixa4{width:100%;height:30px;border-radius:6px;background:#0e1117;margin-top:4px}
   #logitstrip{width:100%;height:44px;border-radius:8px;background:#0e1117;margin-top:6px}
+  /* passo ⑥: amostragem — controles, roleta e desdobramento */
+  .prm{display:flex;flex-direction:column;gap:2px;min-width:140px;flex:1}
+  .prm label{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);
+    display:flex;justify-content:space-between;gap:8px}
+  .prm label b{font:11.5px var(--mono);color:var(--muted);text-transform:none}
+  .seedin{border:1px solid var(--line2);background:var(--bg2);color:var(--text);border-radius:9px;
+    padding:7px 10px;font:12.5px var(--mono);outline:none;width:110px}
+  .seedin:focus{border-color:#33507f}
+  canvas#roleta{width:100%;max-width:430px;aspect-ratio:1/1;background:#0e1117;border-radius:12px;
+    margin:0 auto;display:block}
+  .btnp6{background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:9px;
+    padding:8px 13px;font:inherit;font-size:13px;cursor:pointer;transition:.15s}
+  .btnp6:hover{border-color:var(--accent2)}
+  .btnp6:disabled{opacity:.45;cursor:not-allowed}
+  .btnp6.girar{background:linear-gradient(180deg,#1d3564,#18294b);border-color:#2b4d8f;
+    color:#cfe0ff;font-weight:600}
+  .btnp6.girar:hover{transform:translateY(-1px)}
+  .hchip{--c:var(--accent2);font:12px var(--mono);color:var(--text);background:var(--bg2);
+    border:1px solid var(--line);border-left:3px solid var(--c);border-radius:7px;padding:4px 8px;
+    white-space:pre}
+  .hchip.gen{background:var(--accent-dim);border-color:#2b4d8f;border-left-color:var(--green)}
+  .hchip.end{border-left-color:var(--red);color:#ffb4b4}
+  .p6texto{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg2);
+    border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:14px;margin-top:10px}
+  .p6texto .cursor::after{content:"";display:inline-block;width:7px;height:15px;margin-left:2px;
+    background:var(--accent2);vertical-align:-2px;animation:p6blink 1s steps(2) infinite}
+  @keyframes p6blink{50%{opacity:0}}
   /* busca */
   .busca{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
   .busca input{flex:1;min-width:220px;border:1px solid var(--line2);background:var(--bg2);
@@ -499,10 +527,90 @@
   </section>
   </div>
 
+  <div id="p6" hidden>
+  <section class="card">
+    <h2>6 · Amostragem — a roleta dos logits</h2>
+    <p class="hint">O lm head deu as notas (⑤) — mas nota não é escolha. Alguém tem de
+      escolher o próximo token, e é aqui: <b>temperatura</b> achata ou afia as notas,
+      <b>top-k</b> deixa só os k melhores na roleta, <b>top-p</b> deixa só o bastante para
+      somar p de probabilidade — e a roleta decide. Cada fatia mede exatamente
+      <b>360° × a probabilidade</b> do token: o favorito gordo, os azarões fininhos. O
+      sorteio e o menu vêm do servidor, a mesma conta do <code>sample_next</code> do chat —
+      a roleta aqui é o que o Pingo faz de verdade. A frase é a mesma do passo ①; o menu é
+      a última posição, exatamente o cardápio anunciado no ⑤.</p>
+    <div class="row">
+      <div class="prm"><label>temperatura <b id="v6temp">1</b></label>
+        <input type="range" id="p6temp" min="0" max="2" step="0.05" value="1"
+          title="0 = guloso (uma fatia só); 2 = quase sorteio puro"></div>
+      <div class="prm"><label>top-k <b id="v6topk">0</b></label>
+        <input type="range" id="p6topk" min="0" max="50" step="1" value="0"
+          title="0 = sem filtro; k = só os k primeiros tokens giram"></div>
+      <div class="prm"><label>top-p <b id="v6topp">1</b></label>
+        <input type="range" id="p6topp" min="0.05" max="1" step="0.05" value="1"
+          title="guarda só o mínimo de tokens que somam p"></div>
+      <div class="prm"><label>penalidade de repetição <b id="v6rep">1</b></label>
+        <input type="range" id="p6rep" min="1" max="1.5" step="0.05" value="1"
+          title="pune tokens já ditos — o antídoto do loop do modelo pequeno"></div>
+    </div>
+    <div class="row">
+      <span class="tit">semente</span>
+      <input class="seedin" id="p6seed" placeholder="vazio = sorte" spellcheck="false"
+        title="a mesma semente sorteia o mesmo token — ciência reproduzível">
+      <button class="btnp6 girar" id="p6girar">🎲 girar a roleta</button>
+      <button class="btnp6" id="p6desfazer">↩ desfazer o último</button>
+      <button class="btnp6" id="p6recomecar">recomeçar</button>
+    </div>
+    <div class="tit">a história — o que o modelo já tem na mesa</div>
+    <div class="mchips" id="p6hist"></div>
+    <div class="hint2" id="p6nota"></div>
+  </section>
+
+  <section class="card">
+    <h2>A roleta e o cardápio</h2>
+    <p class="hint">À esquerda, a distribuição de <b>um token só</b> desenhada em graus: o
+      ponteiro dourado em cima é para onde a roda gira. À direita, os candidatos —
+      <b>clique num token para escolher a mão do modelo</b>: ele é inserido na história e a
+      roleta recomeça dali. Se o clique cair num token que o filtro cortou (fora do menu),
+      a roda nem gira: foi você quem tirou o azarão da cartola — repare na
+      <i>probabilidade bruta</i> dele.</p>
+    <div class="duo">
+      <div>
+        <canvas id="roleta"></canvas>
+        <div class="escala"><span id="p6filtros">—</span><span id="p6lectura">passe o mouse</span>
+          <span>🔻 ponteiro</span></div>
+      </div>
+      <div>
+        <div class="tit" id="p6menutit">o cardápio — clique força o token</div>
+        <div class="vizinhos" id="p6menu"></div>
+        <div class="grade" id="p6kvs"></div>
+        <div class="hint2" id="p6menunota"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>O desdobramento — para onde esta história vai</h2>
+    <p class="hint">A roleta mostra <b>um</b> passo de cada vez. Este card faz o caminho
+      inteiro de uma vez: dali para frente o Pingo gira a roleta sozinho, com os <b>mesmos
+      parâmetros</b>, até o <code>&lt;|end|&gt;</code> ou o teto — é para ver o que a
+      escolha (sua ou da roda) <b>puxa</b>. Por baixo, é o <code>generate_stream</code> do
+      chat com KV cache: o passo ⑦ do curso, em pré-estreia.</p>
+    <div class="row">
+      <button class="btnp6 girar" id="p6desd">▶ gerar o resto até o fim</button>
+      <div class="prm" style="max-width:220px"><label>máx. tokens novos <b id="v6dmax">48</b></label>
+        <input type="range" id="p6dmax" min="8" max="96" step="4" value="48"></div>
+      <span class="hint2" id="p6desdnota2">o texto até aqui é a história acima — o resto vem do modelo</span>
+    </div>
+    <div class="p6texto" id="p6desdtexto" hidden></div>
+    <div class="mchips" id="p6desdtoks"></div>
+    <div class="hint2" id="p6desdnota"></div>
+  </section>
+  </div>
+
   <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
     de <span id="vocab">16.000</span> pedaços · passos ① e ② leem o <code>.safetensors</code>
-    sem GPU; os passos ③, ④ e ⑤ rodam um forward real no device do servidor (④ e ⑤ de
-    carona no do ③)</p>
+    sem GPU; os passos ③, ④, ⑤ e ⑥ rodam um forward real no device do servidor (④, ⑤ e ⑥ de
+    carona no do ③ — o ⑥ ainda usa o <code>generate_stream</code> no desdobramento)</p>
 </div>
 
 <div id="ficha">
@@ -536,7 +644,7 @@ const CAT = {
 const PASSOS = [
   ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', true],
   ['RMSNorm + SwiGLU', true], ['lm head — a mesma tabela!', true],
-  ['amostragem', false], ['loop: o token volta', false],
+  ['amostragem — a roleta!', true], ['loop: o token volta', false],
 ];
 const EXEMPLOS = [
   "Quanto a Companhia vai investir até 2028?",
@@ -573,11 +681,13 @@ function irPara(n){
   $('#p3').hidden = n !== 3;
   $('#p4').hidden = n !== 4;
   $('#p5').hidden = n !== 5;
+  $('#p6').hidden = n !== 6;
   [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
   if (n === 2) desenharPasso2();
   if (n === 3) garantirAtencao();
   if (n === 4) garantirBloco();
   if (n === 5) garantirLmhead();
+  if (n === 6) garantirAmostragem();
 }
 
 /* ---------------------------------------------------------------- modelos */
@@ -640,10 +750,12 @@ function desenharTudo(dados){
   p3.pesos.clear(); p3.rope.clear(); p3.pronto = false;   // o forward velho não vale mais
   p4.dados = null; p4.tok = null;                        // idem para o passo ④
   p5.dados = null; p5.tok = null;                        // idem para o passo ⑤
+  resetP6(true);                                         // idem para a roleta do ⑥
   if (state.passo === 2) desenharPasso2();
   if (state.passo === 3) garantirAtencao();
   if (state.passo === 4) garantirBloco();
   if (state.passo === 5) garantirLmhead();
+  if (state.passo === 6) garantirAmostragem();
 }
 
 function desenharMedidor(dados, s){
@@ -1546,6 +1658,349 @@ async function desenharLidas(d){
     + `mexeram no <b>vetor</b> que entra na tabela.`;
 }
 
+/* ------------------------------------------------ passo ⑥ · amostragem (a roleta) */
+/* O menu, o sorteio e a roleta vêm do servidor — a mesma conta de `generate.sample_next`.
+   O cliente só desenha a roda em graus (360° × p), gira a animação e monta a história;
+   cada escolha (da roda ou do clique do aluno) puxa o menu da posição seguinte. */
+const MAX_P6_PREFILL = 128;      // teto da frase na roleta; o servidor corta em 160 no total
+const MAX_P6_GERADOS = 96;       // teto de tokens girados na história interativa
+const p6 = {gerados: [], ult: null, chave: '', fatias: [], rot: 0, anim: 0, ocupado: false,
+            fim: null, desd: null, desdMax: 48, timerP: null,
+            params: {temperature: 1.0, top_k: 0, top_p: 1.0, repetition_penalty: 1.0, seed: -1}};
+
+const p6prefill = () => state.tokens.slice(0, MAX_P6_PREFILL);
+const p6ids = () => p6prefill().map(t => t.id).concat(p6.gerados.map(g => g.id));
+const p6chave = () => state.modelo + ':' + p6ids().join(',');
+const norm360 = r => ((r % 360) + 360) % 360;
+const pct = x => dec((x * 100).toFixed(1));
+
+async function amostraPost(extra){
+  let r;
+  try {
+    r = await fetch('/api/lab/amostra', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({modelo: state.modelo, ids: p6ids()}, p6.params, extra))});
+  } catch (e){ erro('servidor fora do ar: ' + e.message); return null; }
+  const d = await r.json();
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return null; }
+  limpaErro();
+  return d;
+}
+
+async function garantirAmostragem(){
+  if (!state.tokens.length || p6.ocupado) return;
+  if (p6.fim){ desenharPasso6(); return; }
+  if (p6.ult && p6.chave === p6chave()){ desenharPasso6(); return; }
+  p6.ocupado = true;
+  const d = await amostraPost({acao: 'menu'});
+  p6.ocupado = false;
+  if (!d) return;
+  p6.ult = d; p6.chave = p6chave(); p6.fatias = montarFatias(d);
+  desenharPasso6();
+}
+
+function montarFatias(d){
+  const f = d.candidatos.map(c => ({id: c.id, p: c.prob, cor: CAT[c.kind] || '#5b93ff',
+                                    rotulo: visivel(c.texto || c.token), outros: 0}));
+  if (d.outros && d.outros.prob > 0.0005)
+    f.push({id: null, p: d.outros.prob, cor: '#39424f',
+            rotulo: `+${fmt(d.outros.n)}`, outros: d.outros.n});
+  let cum = 0;
+  for (const x of f){ x.ini = cum; cum += x.p; x.fim = cum; }
+  return f;
+}
+
+async function girarRoleta(){
+  if (p6.ocupado || p6.fim || p6.anim) return;
+  p6.ocupado = true;
+  const d = await amostraPost({acao: 'girar'});
+  if (!d || !d.sorteado){ p6.ocupado = false; return; }
+  p6.ult = d; p6.chave = p6chave(); p6.fatias = montarFatias(d);
+  desenharRoleta(); desenharMenu6(d);
+  const s = d.sorteado;
+  const f = p6.fatias.find(x => x.id === s.id) || null;
+  let alvo = null;
+  if (f){
+    const r = Math.random();
+    alvo = f.ini + r * (f.fim - f.ini);
+    $('#p6lectura').textContent = `o nº da roleta: ${r.toFixed(4)} → caiu nos `
+      + `${dec((f.ini * 360).toFixed(0))}–${dec((f.fim * 360).toFixed(0))}° de `
+      + `'${visivel(s.texto || s.token)}'`;
+  }
+  animarRoleta(alvo, () => { p6.ocupado = false; commitEscolha(d); });
+}
+
+async function forcarToken(c){
+  if (p6.ocupado || p6.fim || p6.anim) return;
+  p6.ocupado = true;
+  const d = await amostraPost({acao: 'forcar', token: c.id});
+  if (!d || !d.sorteado){ p6.ocupado = false; return; }
+  p6.ult = d; p6.chave = p6chave(); p6.fatias = montarFatias(d);
+  const f = p6.fatias.find(x => x.id === c.id) || null;
+  desenharRoleta(); desenharMenu6(d);
+  if (f === null)
+    $('#p6lectura').textContent = `'${visivel(c.texto || c.token)}' não tem fatia na roda: `
+      + 'o filtro cortou este token — foi a sua mão que o tirou da cartola';
+  animarRoleta(f ? f.ini + 0.5 * (f.fim - f.ini) : null,
+               () => { p6.ocupado = false; commitEscolha(d); });
+}
+
+function commitEscolha(d){
+  const s = d.sorteado;
+  p6.gerados.push({id: s.id, token: s.token, texto: s.texto, modo: s.modo,
+                   dentro: s.dentro, prob: s.prob, bruto: s.p_bruto});
+  p6.ult = null; p6.desd = null;                   // a próxima posição pede outro menu
+  if (d.end_id != null && s.id === d.end_id) p6.fim = 'end';
+  else if (p6.gerados.length >= MAX_P6_GERADOS || p6ids().length >= 160) p6.fim = 'teto';
+  desenharPasso6();
+  if (!p6.fim) garantirAmostragem();
+}
+
+/* ---- a animação: o ponteiro dourado em cima, a roda para na fatia sorteada ---- */
+function animarRoleta(alvo, cb){
+  if (p6.anim) cancelAnimationFrame(p6.anim);
+  const de = p6.rot;
+  if (alvo === null){ p6.rot = norm360(de); desenharRoleta(); cb(); return; }
+  const q = -(alvo * 360) - 1.5;                    // a fatia toda para debaixo do ponteiro
+  const k = Math.max(0, Math.ceil((q - (de - 720)) / 360));   // pelo menos ~2 voltas
+  const ate = q + 360 * k;
+  const t0 = performance.now(), dur = 1900;
+  const quadro = (agora) => {
+    const t = Math.min(1, (agora - t0) / dur), e = 1 - Math.pow(1 - t, 4);
+    p6.rot = de + (ate - de) * e;
+    desenharRoleta();
+    if (t < 1) p6.anim = requestAnimationFrame(quadro);
+    else { p6.rot = norm360(ate); p6.anim = 0; desenharRoleta(); cb(); }
+  };
+  p6.anim = requestAnimationFrame(quadro);
+}
+
+function desenharPasso6(){
+  desenharHistoria6();
+  desenharRoleta();
+  desenharMenu6(p6.ult);
+  desenharKvs6(p6.ult);
+  desenharDesd();
+  atualizarBotoes6();
+}
+
+function atualizarBotoes6(){
+  $('#p6girar').disabled = !!p6.fim || !p6.ult;
+  $('#p6girar').textContent = p6.fim === 'end' ? '⏹ o modelo disse <|end|>'
+    : p6.fim === 'teto' ? '⏹ teto de tokens atingido' : '🎲 girar a roleta';
+  $('#p6desfazer').disabled = !p6.gerados.length || p6.ocupado;
+  $('#p6desd').disabled = p6.ocupado;
+}
+
+function desenharHistoria6(){
+  const box = $('#p6hist'); box.innerHTML = '';
+  p6prefill().forEach(t => {
+    const b = document.createElement('span');
+    b.className = 'hchip';
+    b.style.setProperty('--c', CAT[t.kind] || '#5b93ff');
+    b.textContent = visivel(t.texto || t.superficie);
+    b.title = `id ${t.id} · ${t.kind} — prompt: isto o modelo recebeu, não gerou`;
+    box.appendChild(b);
+  });
+  p6.gerados.forEach((g, i) => {
+    const b = document.createElement('span');
+    b.className = 'hchip gen';
+    b.textContent = (g.modo === 'mão' ? '✋ ' : '🎲 ') + visivel(g.texto || g.token);
+    b.title = `passo ${i + 1} · id ${g.id} · ${g.modo === 'mão' ? 'você escolheu' : 'a roleta escolheu'}`
+      + ` · p ${dec((g.prob * 100).toFixed(2))}%${g.dentro === false ? ' · FORA do filtro' : ''}`;
+    box.appendChild(b);
+  });
+  let nota;
+  if (p6.fim === 'end') nota = 'a história terminou com o <code>&lt;|end|&gt;</code>: o modelo '
+    + 'achou que a resposta cabia. Foi o que o SFT ensinou — e a roleta quase sempre fecha com ele.';
+  else if (p6.fim === 'teto') nota = 'chegamos ao teto do laboratório — chega de girar.';
+  else if (!p6.gerados.length) nota = 'a roleta ainda não girou: o menu abaixo é o cardápio do '
+    + '<b>primeiro</b> token gerado — exatamente a última posição do passo ⑤.';
+  else nota = `${fmt(p6.gerados.length)} token(s) girado(s) — cada um saiu desta roleta. `
+    + 'Repare como a história muda de humor quando você força um azarão.';
+  const cortado = state.tokens.length > MAX_P6_PREFILL
+    ? ` <span style="color:var(--yellow)">A frase foi cortada em ${MAX_P6_PREFILL} tokens para a roleta.</span>`
+    : '';
+  $('#p6nota').innerHTML = nota + cortado;
+}
+
+function desenharRoleta(){
+  const cv = $('#roleta');
+  if (!cv.clientWidth) return;                       // aba oculta: sem largura, sem roda
+  if (!p6.ult || !p6.fatias.length){
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientWidth * dpr);
+    return;
+  }
+  const d = p6.ult, dpr = Math.min(2, window.devicePixelRatio || 1);
+  const lado = cv.clientWidth;
+  cv.width = cv.height = Math.round(lado * dpr);
+  const ctx = cv.getContext('2d'), c = cv.width / 2, R = c * 0.80, TAU = Math.PI * 2;
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const base = -Math.PI / 2 + p6.rot * Math.PI / 180;
+  for (const f of p6.fatias){
+    if (f.p <= 0) continue;
+    ctx.fillStyle = f.cor;
+    ctx.beginPath(); ctx.moveTo(c, c);
+    ctx.arc(c, c, R, base + f.ini * TAU, base + f.fim * TAU);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#0a0c10'; ctx.lineWidth = 1.2 * dpr; ctx.stroke();
+    f.a0 = base + f.ini * TAU; f.a1 = base + f.fim * TAU;    // p/ o hover
+    if (f.p >= 0.055){
+      const me = (f.a0 + f.a1) / 2, rr = R * 0.64;
+      ctx.fillStyle = f.outros ? '#cdd6e4' : '#0b0e13';
+      ctx.textAlign = 'center';
+      ctx.font = `600 ${(f.p >= 0.1 ? 11.5 : 9.5) * dpr}px ui-sans-serif, system-ui, sans-serif`;
+      const nome = f.rotulo.length > 13 ? f.rotulo.slice(0, 12) + '…' : f.rotulo;
+      ctx.fillText(nome, c + Math.cos(me) * rr, c + Math.sin(me) * rr - 2 * dpr);
+      ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+      ctx.fillText((f.p * 100).toFixed(0) + '%', c + Math.cos(me) * rr, c + Math.sin(me) * rr + 10 * dpr);
+    }
+  }
+  const sc = p6.ult.sorteado;                          // o hub: o último sorteio da roda
+  ctx.fillStyle = '#12161d';
+  ctx.beginPath(); ctx.arc(c, c, c * 0.26, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#1f2632'; ctx.lineWidth = 1.4 * dpr; ctx.stroke();
+  ctx.fillStyle = '#8d98aa'; ctx.textAlign = 'center';
+  ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+  ctx.fillText(sc ? 'saiu' : 'gire', c, c - 8 * dpr);
+  ctx.fillStyle = '#e7ebf2'; ctx.font = `600 ${12.5 * dpr}px ui-monospace, monospace`;
+  const rotuloHub = sc ? (visivel(sc.texto || sc.token) || '␣') : '🎲';
+  ctx.fillText(rotuloHub.length > 9 ? rotuloHub.slice(0, 8) + '…' : rotuloHub, c, c + 9 * dpr);
+  ctx.fillStyle = '#ffd166';                           // ponteiro fixo em cima
+  ctx.beginPath();
+  ctx.moveTo(c - 6 * dpr, c - R - 4 * dpr); ctx.lineTo(c + 6 * dpr, c - R - 4 * dpr);
+  ctx.lineTo(c, c - R + 11 * dpr); ctx.closePath(); ctx.fill();
+  cv.onmousemove = (ev) => {
+    if (p6.anim) return;
+    const rect = cv.getBoundingClientRect();
+    const x = ev.clientX - rect.left - rect.width / 2;
+    const y = ev.clientY - rect.top - rect.height / 2;
+    const rad = Math.hypot(x, y) / (rect.width / 2);
+    if (rad > 0.84 || rad < 0.30){ $('#p6lectura').textContent = 'passe o mouse sobre a roda'; return; }
+    let g = Math.atan2(y, x) + Math.PI / 2 - p6.rot * Math.PI / 180;
+    g = ((g % TAU) + TAU) % TAU;
+    const frac = g / TAU;
+    const f = p6.fatias.find(q2 => frac >= q2.ini && frac < q2.fim);
+    if (f) $('#p6lectura').textContent = f.outros
+      ? `fatia cinza: ${fmt(f.outros)} tokens somando ${pct(f.p)}% — ${(360 * f.p).toFixed(0)}°`
+      : `'${f.rotulo}': ${pct(f.p)}% → ${(360 * f.p).toFixed(1)}° dos 360° da roda`;
+  };
+  cv.onmouseleave = () => { if (!p6.anim) $('#p6lectura').textContent = 'passe o mouse sobre a roda'; };
+  $('#p6filtros').textContent = `T ${dec(d.filtros.temperatura)} · top-k ${d.filtros.top_k || 'livre'} · `
+    + `top-p ${dec(d.filtros.top_p)} · ${fmt(d.retidos)} retidos`;
+}
+
+function desenharMenu6(d){
+  const box = $('#p6menu'); box.innerHTML = '';
+  if (!d){ box.innerHTML = '<span class="hint2">a roleta ainda está montando…</span>'; return; }
+  const mx = Math.max(d.candidatos[0] ? d.candidatos[0].prob : 0, 0.01);
+  for (const c of d.candidatos){
+    const linha = document.createElement('div'); linha.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = c.rank + '·' + visivel(c.texto || c.token);
+    t.title = `id ${c.id} · logit ${dec(c.logit)} · p sem filtro ${dec((c.p_bruto * 100).toFixed(2))}%`
+      + ' — clique para FORÇAR este token na história';
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (c.prob / mx * 100).toFixed(1) + '%';
+    ench.style.background = CAT[c.kind] || '#5b93ff';
+    barra.appendChild(ench);
+    const num = document.createElement('div'); num.className = 'c';
+    num.textContent = `${pct(c.prob)}% · ${dec(c.graus.toFixed(0))}°`;
+    linha.append(t, barra, num);
+    linha.onclick = () => forcarToken(c);
+    linha.style.cursor = 'pointer';
+    box.appendChild(linha);
+  }
+  if (d.outros)
+    $('#p6menutit').textContent = `o cardápio — ${d.candidatos.length} fatias desenhadas + uma `
+      + `cinza com ${fmt(d.outros.n)} tokens — clique força o token`;
+  else
+    $('#p6menutit').textContent = 'o cardápio — clique num token para forçar a mão do modelo';
+  let msg;
+  if (d.filtros.temperatura <= 0)
+    msg = 'T = 0: a roleta é <b>uma fatia só</b> — girar é sempre o campeão (o guloso). '
+        + 'Para ver a roda com gordura, suba a temperatura.';
+  else if (d.retidos < d.vocab)
+    msg = `o filtro cortou <b>${fmt(d.vocab - d.retidos)}</b> tokens: eles têm nota (logit), mas `
+        + `fatia <b>0°</b> — na roda de hoje não há como sair azarão. Ainda dá para forçar a mão.`;
+  else
+    msg = 'nenhum filtro cortou nada: <b>todo o vocab gira</b>. A temperatura decide quem engorda.';
+  $('#p6menunota').innerHTML = msg;
+}
+
+function desenharKvs6(d){
+  const g = $('#p6kvs'); g.innerHTML = '';
+  if (!d) return;
+  g.append(
+    kv('a maior fatia', `${visivel(d.maior.texto || d.maior.token)} · ${pct(d.maior.prob)}% · `
+      + `${dec(d.maior.graus.toFixed(0))}°`),
+    kv('no cardápio', `${fmt(d.candidatos.length)} fatias${d.outros ? ` + a cinza com ${fmt(d.outros.n)}` : ''}`),
+    kv('o filtro guardou', `${fmt(d.retidos)} de ${fmt(d.vocab)} tokens`),
+    kv('campeão sem filtro', `${dec((d.maior.p_bruto * 100).toFixed(1))}% · logit ${dec(d.maior.logit)}`));
+  if (d.sorteado)
+    g.append(kv('o último sorteio', `${visivel(d.sorteado.texto || d.sorteado.token)} · `
+      + `${d.sorteado.modo === 'mão' ? 'a sua mão' : 'a roleta'} · ${pct(d.sorteado.prob)}%`));
+}
+
+/* ---- o desdobramento: dali para frente o modelo gira sozinho (generate_stream) ---- */
+function historiaTexto(){
+  return p6prefill().map(t => t.texto).join('') + p6.gerados.map(g => g.texto).join('');
+}
+
+function desenharDesd(){
+  const caixa = $('#p6desdtexto'), toks = $('#p6desdtoks'), nota = $('#p6desdnota');
+  const d = p6.desd;
+  if (!d){ caixa.hidden = true; caixa.innerHTML = ''; toks.innerHTML = ''; nota.textContent = ''; return; }
+  caixa.hidden = false;
+  const hist = document.createElement('span'); hist.textContent = historiaTexto();
+  const resto = document.createElement('span'); resto.textContent = d.texto;
+  resto.style.color = '#cfe0ff';
+  if (d.pulando) resto.classList.add('cursor');
+  caixa.replaceChildren(hist, resto);
+  toks.innerHTML = '';
+  (d.tokens || []).forEach(t => {
+    const b = document.createElement('span');
+    b.className = 'hchip' + (t.token === '<|end|>' ? ' end' : '');
+    b.textContent = visivel(t.texto || t.token);
+    b.title = `id ${t.id} — o modelo girando sozinho`;
+    toks.appendChild(b);
+  });
+  const parada = d.parada === 'end_token' ? 'o modelo emitiu <code>&lt;|end|&gt;</code>: achou que a resposta acabou'
+    : d.parada === 'max_tokens' ? 'paramos no teto de tokens'
+    : d.parada === 'contexto' ? 'a frase encheu o contexto do modelo' : d.parada;
+  nota.innerHTML = d.pulando ? 'girando a roleta sozinha… (o forward é real; na CPU do lab pode levar um instante)'
+    : `mais <b>${fmt(d.n_novos)}</b> tokens em ${dec(d.segundos)} s · parada: ${parada}. `
+      + 'Compare com o que <i>você</i> teria feito: a mesma história, dois futuros.';
+}
+
+async function desdobrar(){
+  if (p6.ocupado || p6.fim === 'end') return;
+  p6.ocupado = true;
+  p6.desd = {texto: '', tokens: [], parada: '…', n_novos: 0, segundos: 0, pulando: true};
+  desenharDesd(); atualizarBotoes6();
+  let r;
+  try {
+    r = await fetch('/api/lab/desdobrar', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({modelo: state.modelo, ids: p6ids(),
+                                          max_new_tokens: p6.desdMax}, p6.params))});
+  } catch (e){ erro('servidor fora do ar: ' + e.message); p6.desd = null; p6.ocupado = false; desenharDesd(); atualizarBotoes6(); return; }
+  const d = await r.json();
+  p6.ocupado = false;
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); p6.desd = null; desenharDesd(); atualizarBotoes6(); return; }
+  limpaErro();
+  p6.desd = d;
+  desenharDesd(); atualizarBotoes6();
+}
+
+function resetP6(mudaTudo){
+  p6.gerados = []; p6.ult = null; p6.fim = null;
+  if (mudaTudo){ p6.desd = null; p6.rot = 0; }
+  p6.chave = '';
+}
+
 /* ---------------------------------------------------------------- ficha */
 const cacheFicha = new Map();
 
@@ -1697,6 +2152,42 @@ $('#bgo').onclick = procurar;
 $('#bq').addEventListener('keydown', e => { if (e.key === 'Enter') procurar(); });
 $('#ffecha').onclick = fecharFicha;
 document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharFicha(); });
+
+/* controles do passo ⑥ */
+const P6_SLIDERS = [['p6temp', 'temperature', 'v6temp'], ['p6topk', 'top_k', 'v6topk'],
+                    ['p6topp', 'top_p', 'v6topp'], ['p6rep', 'repetition_penalty', 'v6rep']];
+for (const [id, chave, alvo] of P6_SLIDERS){
+  const el = $('#' + id), out = $('#' + alvo);
+  el.oninput = () => {
+    p6.params[chave] = +el.value;
+    out.textContent = (chave === 'top_k' && +el.value === 0) ? 'livre' : el.value;
+    p6.ult = null;                                    // outro filtro, outra roda: refaz o menu
+    clearTimeout(p6.timerP); p6.timerP = setTimeout(garantirAmostragem, 250);
+  };
+}
+$('#p6seed').oninput = () => {
+  const v = $('#p6seed').value.trim();
+  p6.params.seed = v === '' || !Number.isFinite(parseInt(v, 10)) ? -1 : parseInt(v, 10);
+  if (p6.params.seed > 2147483647) p6.params.seed = 2147483647;
+  p6.ult = null;
+  clearTimeout(p6.timerP); p6.timerP = setTimeout(garantirAmostragem, 350);
+};
+$('#p6dmax').oninput = () => {
+  p6.desdMax = +$('#p6dmax').value;
+  $('#v6dmax').textContent = $('#p6dmax').value;
+};
+$('#p6girar').onclick = girarRoleta;
+$('#p6desd').onclick = desdobrar;
+$('#p6desfazer').onclick = () => {
+  if (p6.ocupado || p6.anim || !p6.gerados.length) return;
+  p6.gerados.pop(); p6.ult = null; p6.fim = null; p6.desd = null;
+  desenharPasso6(); garantirAmostragem();
+};
+$('#p6recomecar').onclick = () => {
+  if (p6.ocupado || p6.anim) return;
+  resetP6(true);
+  desenharPasso6(); garantirAmostragem();
+};
 let redesenho = null;
 window.addEventListener('resize', () => {
   clearTimeout(redesenho);

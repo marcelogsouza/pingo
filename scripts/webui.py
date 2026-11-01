@@ -23,7 +23,11 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
   carona no MESMO forward: a captura do ③ já entrega o bloco inteiro — normas antes/depois,
   γ e as 2.304 portas do MLP do token escolhido. O passo ⑤ (lm head) pega a mesma carona:
   a norm final e os **logits** daquele forward (o `lm_head` é a própria tabela do passo ①
-  — tied — lida de volta com o vetor final de cada posição).
+  — tied — lida de volta com o vetor final de cada posição). O passo ⑥ (amostragem) faz a
+  última carona: os logits viram **roleta** — cada fatia mede 360° × a probabilidade, e o
+  aluno gira (a conta é `generate.sample_next`, sorteio incluso) ou escolhe o token com a
+  mão; o card do desdobramento continua a história dali para frente com `generate_stream`
+  (KV cache — já é a prévia do ⑦) e os mesmos parâmetros da tela.
 
 Uso:
   uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
@@ -56,9 +60,10 @@ from tokenizers import Tokenizer
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pingo.didatic import (LIDA_PADRAO, MAX_ATTN_TOKENS, MAX_LAB_CHARS,  # noqa: E402
-                           MAX_LAB_TOKENS, TabelaEmbeddings, TOPK_LMHEAD, VIZINHOS_PADRAO,
-                           buscar, ficha_bloco, ficha_lmhead, tokenizar)
+from pingo.didatic import (LIDA_PADRAO, MAX_AMOSTRA_TOKENS, MAX_ATTN_TOKENS,  # noqa: E402
+                           MAX_LAB_CHARS, MAX_LAB_TOKENS, TabelaEmbeddings, TOPK_LMHEAD,
+                           VIZINHOS_PADRAO, buscar, especial_ids, ficha_bloco, ficha_lmhead,
+                           menu_amostra, tokenizar, texto_legivel)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
@@ -285,6 +290,18 @@ def params_de(dados: dict) -> dict:
         "top_k": _num(dados, "top_k", 0, 0, 200, inteiro=True),
         "repetition_penalty": _num(dados, "repetition_penalty", 1.15, 1.0, 2.0),
         "max_new_tokens": _num(dados, "max_new_tokens", 128, 1, 512, inteiro=True),
+        "seed": _num(dados, "seed", -1, -1, 2**31 - 1, inteiro=True),
+    }
+
+
+def params_amostra(dados: dict) -> dict:
+    """Os mesmos hiperparâmetros do chat, com os padrões didáticos do ⑥: T=1 sem filtros e
+    penalidade 1 (a lição é a roleta pura; o aluno é quem liga os filtros um a um)."""
+    return {
+        "temperature": _num(dados, "temperature", 1.0, 0.0, 2.0),
+        "top_p": _num(dados, "top_p", 1.0, 0.05, 1.0),
+        "top_k": _num(dados, "top_k", 0, 0, 200, inteiro=True),
+        "repetition_penalty": _num(dados, "repetition_penalty", 1.0, 1.0, 2.0),
         "seed": _num(dados, "seed", -1, -1, 2**31 - 1, inteiro=True),
     }
 
@@ -603,6 +620,112 @@ def create_app(server: Server | None = None) -> Flask:
         except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
         except Exception as exc:  # noqa: BLE001 — um forward real falha de muitos jeitos
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
+        return jsonify(saida)
+
+    # -- passo ⑥: amostragem — os logits reais viram roleta (carona no mesmo forward do ③–⑤) --
+
+    @app.post("/api/lab/amostra")
+    def lab_amostra():
+        """A roleta do próximo token: `acao` `menu` desenha, `girar` sorteia, `forcar` obedece.
+
+        Os logits são os da `captura_atencao` — o MESMO forward dos passos ③–⑤, com a chave
+        `modelo+ids` em cache: se o aluno vem do ⑤ com a mesma frase, a roleta não refaz o
+        forward nenhum; e cada giro repete a conta exata de `generate.sample_next`
+        (temperatura → top-k → top-p → `multinomial`), com a penalidade de repetição aplicada
+        sobre a história inteira (prompt + gerados) como no chat.
+        """
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (dados.get("ids") or [])][:MAX_AMOSTRA_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        acao = dados.get("acao") or "menu"
+        if acao not in ("menu", "girar", "forcar"):
+            return jsonify({"erro": "acao deve ser menu, girar ou forcar"}), 400
+        force = None
+        if acao == "forcar":
+            try:
+                force = int(dados.get("token"))
+            except (TypeError, ValueError):
+                return jsonify({"erro": "mande o token (id inteiro) para forçar"}), 400
+        p = params_amostra(dados)
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            cap = srv.captura_atencao(model_id, ids)
+            saida = menu_amostra(cap["logits"][-1], ids, srv.tabela_de(model_id).id_para_token,
+                                 temperatura=p["temperature"], top_k=p["top_k"],
+                                 top_p=p["top_p"], repeticao=p["repetition_penalty"],
+                                 acao=acao, force=force, seed=p["seed"],
+                                 especiais=especial_ids(srv.tokenizador_de(model_id)))
+            if acao != "menu" and srv.specs[model_id].instrucao:
+                saida["end_id"] = chat_token_ids(srv.tokenizador_de(model_id)).get(END_TOKEN)
+            saida.update({"modelo": model_id, "n": len(ids),
+                          "cortado_em": MAX_AMOSTRA_TOKENS if len(ids) >= MAX_AMOSTRA_TOKENS
+                          else None})
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        except Exception as exc:  # noqa: BLE001 — um forward real falha de muitos jeitos
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
+        return jsonify(saida)
+
+    @app.post("/api/lab/desdobrar")
+    def lab_desdobrar():
+        """O desdobramento do ⑥: dali para frente o Pingo gira a roleta sozinho, até o fim.
+
+        É `generate_stream` puro (KV cache incluso — a prévia do passo ⑦) com os MESMOS
+        parâmetros da roleta na tela: o card mostra o que a escolha — do modelo ou do aluno
+        — puxa até o `<|end|>` ou o teto de tokens. Uma chamada, uma geração: o lock vale.
+        """
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (dados.get("ids") or [])][:MAX_AMOSTRA_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        max_novo = int(_num(dados, "max_new_tokens", 48, 1, 96, inteiro=True))
+        p = params_amostra(dados)
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            carregado = srv.carregar(model_id)
+            t0 = time.perf_counter()
+            novos: list[int] = []
+            parada = "max_tokens"
+            for tok in generate_stream(
+                    carregado.model, ids, max_new_tokens=max_novo,
+                    temperature=p["temperature"], top_k=p["top_k"] or None,
+                    top_p=p["top_p"], repetition_penalty=p["repetition_penalty"],
+                    stop_token=carregado.end_id if carregado.spec.instrucao else None,
+                    seed=None if p["seed"] < 0 else p["seed"]):
+                novos.append(int(tok))
+                if carregado.end_id is not None and novos[-1] == carregado.end_id:
+                    parada = "end_token"
+                    break
+            tabela = srv.tabela_de(model_id)
+            saida = {"modelo": model_id, "parada": parada, "n_novos": len(novos),
+                     "segundos": round(time.perf_counter() - t0, 3),
+                     "tokens": [{"id": i, "token": tabela.token(i),
+                                 "texto": texto_legivel(tabela.token(i))} for i in novos],
+                     "texto": carregado.tokenizer.decode(novos, skip_special_tokens=False)
+                              if novos else ""}
+        except Exception as exc:  # noqa: BLE001 — um generate real falha de muitos jeitos
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
         finally:
             srv.gen_lock.release()

@@ -1,4 +1,4 @@
-"""Modo didático (passos ①–⑤) — do texto aos ids, aos vetores, ao bloco e às notas do lm head.
+"""Modo didático (passos ①–⑥) — do texto aos ids, aos vetores, ao bloco, às notas do lm head e à roleta.
 
 O curso do Pingo precisa mostrar o que o modelo *vê* antes de qualquer conta: o BPE
 byte-level fatiando a frase em pedaços (com o id de cada um), o vetor que cada id carrega
@@ -6,7 +6,10 @@ na tabela de embeddings, e a tabela inteira de uma vez — normas, histograma e 
 escalar que um `lm_head` tied leria de volta daquele vetor (passo ②). Os passos ③–⑤
 trabalham com a **captura de um forward real** (entregue pelo `Server` da WebUI): as
 funções daqui só desenham os tensores capturados — `ficha_bloco` para o bloco (④) e
-`ficha_lmhead` para a norm final + os logits (⑤).
+`ficha_lmhead` para a norm final + os logits (⑤). O passo ⑥ pega a mesma carona e vira
+**conta**: `menu_amostra` aplica temperatura, top-k e top-p exatamente como
+`generate.sample_next` e devolve o menu que desenha a roleta — cada fatia mede
+**360° × a probabilidade** do token.
 
 Duas decisões estruturam o módulo:
 
@@ -35,6 +38,7 @@ import torch.nn.functional as F
 
 MAX_LAB_CHARS = 4_000      # teto do texto que o navegador pode mandar
 MAX_LAB_TOKENS = 512       # teto de chips desenhados (acima disso, avisa e corta)
+MAX_AMOSTRA_TOKENS = 160   # teto de tokens (frase + gerados) na roleta do passo ⑥
 VIZINHOS_PADRAO = 8        # k da lista "tokens vizinhos"
 BUSCA_PADRAO = 20          # limites do lookup no vocab
 FAIXA_BINS = 128           # colunas da linha da matriz (896 = 7 × 128; funciona p/ qualquer dim)
@@ -526,6 +530,114 @@ def ficha_lmhead(final: dict[str, torch.Tensor], ids: list[int],
         saida["gamma"] = {"media": round(float(g.mean()), 4), "min": round(float(g.min()), 4),
                           "max": round(float(g.max()), 4), "std": round(float(g.std()), 4),
                           "faixa": faixa_de(g, min(b, d))}
+    return saida
+
+
+# ------------------------------------------------------------------ amostragem (passo ⑥)
+
+TOPK_AMOSTRA = 24        # candidatos que viram fatia desenhada (o resto vira a fatia "outros")
+
+
+def menu_amostra(linha: torch.Tensor, vistos: list[int], id_para_token: dict[int, str], *,
+                 temperatura: float = 1.0, top_k: int = 0, top_p: float = 1.0,
+                 repeticao: float = 1.0, acao: str = "menu", force: int | None = None,
+                 seed: int | None = None, especiais: set[int] | frozenset[int] = frozenset(),
+                 k: int = TOPK_AMOSTRA) -> dict[str, Any]:
+    """A roleta do passo ⑥: a linha de logits vira fatias de 360° × probabilidade.
+
+    A conta é a MESMA de `generate.sample_next` — penalidade de repetição, temperatura,
+    depois top-k e top-p na mesma ordem, e o sorteio por `torch.multinomial` na distribuição
+    filtrada. Se a tela e o chat fazem a mesma conta, a roleta não é figura: é o que o
+    Pingo faz de verdade (o que a tela mostra a mais é o caminho — as fatias e os graus).
+
+    `acao`: `menu` só desenha a roleta; `girar` sorteia; `forcar` obedece o id escolhido —
+    que pode estar até fora do menu (é assim que o aluno vê o filtro matando um token: o
+    logit existe, a fatia é 0° e a probabilidade "bruta" conta a história).
+
+    Quem cai fora das `k` maiores fatias não some: vira a fatia `outros`, e a soma dos
+    graus fecha em 360 — o professor pergunta "quantos tokens cabem nessa fatia cinza?".
+    """
+    if acao not in ("menu", "girar", "forcar"):
+        raise ValueError("acao deve ser menu, girar ou forcar")
+    x = linha.detach().float().reshape(-1).clone()
+    vocab = int(x.numel())
+
+    if repeticao != 1.0 and vistos:
+        vistos_u = torch.tensor(sorted({int(v) for v in vistos if 0 <= int(v) < vocab}),
+                                dtype=torch.long)
+        if vistos_u.numel():
+            sel = x[vistos_u]
+            x[vistos_u] = torch.where(sel > 0, sel / repeticao, sel * repeticao)
+
+    bruto = F.softmax(x, dim=-1) if temperatura > 0 else None   # filtro nenhum, só p/ comparar
+    if temperatura <= 0:
+        x = torch.full_like(x, float("-inf"))
+        x[int(linha.detach().float().reshape(-1).argmax())] = 1.0   # T=0: uma fatia só, o argmax
+    else:
+        x = x / temperatura
+        if top_k and top_k > 0:
+            kk = min(int(top_k), vocab)
+            x = torch.where(x >= x.topk(kk).values[-1], x, torch.full_like(x, float("-inf")))
+        if top_p and top_p < 1.0:
+            ordem_v, ordem_i = torch.sort(x, descending=True)
+            p_ord = ordem_v.softmax(dim=-1)
+            keep = p_ord.cumsum(dim=-1).sub(p_ord) < top_p       # sempre mantém o melhor
+            x = torch.where(torch.zeros_like(x, dtype=torch.bool).scatter_(0, ordem_i, keep),
+                            x, torch.full_like(x, float("-inf")))
+
+    p = x.softmax(dim=-1)               # descartados ficam exatamente 0.0
+    retidos = int((p > 0).sum())
+    ordem = torch.argsort(p, descending=True)
+    k = max(1, min(int(k), 50))
+
+    def quem(i: int, rank: int | None = None) -> dict[str, Any]:
+        """A ficha de um candidato: nota original, probabilidade e a fatia em graus.
+
+        `rank` é a posição no menu (1 = a maior fatia); para um token fora das `k` primeiras
+        fatias, `(p > pᵢ).sum() + 1` — passar de `retidos` denuncia o token cortado pelo filtro.
+        `p_bruto` vem da distribuição sem filtro: é o número que explica um token forçado.
+        """
+        nome = id_para_token.get(int(i), f"<id {i}>")
+        texto = texto_legivel(nome)
+        return {"id": int(i),
+                "rank": rank if rank is not None else int((p > p[int(i)]).sum()) + 1,
+                "token": nome, "texto": texto,
+                "kind": categoria(nome, texto, int(i) in especiais),
+                "logit": round(float(linha.detach().float().reshape(-1)[int(i)]), 4),
+                "prob": round(float(p[int(i)]), 6),
+                "graus": round(360.0 * float(p[int(i)]), 2),
+                "p_bruto": round(float(bruto[int(i)] if bruto is not None else p[int(i)]), 6)}
+
+    candidatos = [quem(int(i), rank + 1) for rank, i in enumerate(ordem[:min(k, retidos)])]
+    resto = [float(p[i]) for i in ordem[min(k, retidos):retidos]]
+    outros = ({"n": len(resto), "prob": round(sum(resto), 6),
+               "graus": round(360.0 * sum(resto), 2)} if resto else None)
+
+    saida: dict[str, Any] = {
+        "acao": acao, "vocab": vocab,
+        "filtros": {"temperatura": round(float(temperatura), 4), "top_k": int(top_k or 0),
+                    "top_p": round(float(top_p), 4), "repeticao": round(float(repeticao), 4)},
+        "retidos": retidos, "p_retidos": round(float(p.sum()), 6),
+        "candidatos": candidatos, "outros": outros,
+        "maior": candidatos[0] if candidatos else None,
+    }
+    if seed is not None and int(seed) >= 0:
+        saida["semente"] = int(seed)         # na tela: mesma semente, mesma roleta
+
+    if acao == "forcar":
+        if force is None or not 0 <= int(force) < vocab:
+            raise IndexError(f"token {force} fora do vocab (0..{vocab - 1})")
+        escolhido, modo, dentro = int(force), "mão", float(p[int(force)]) > 0
+    elif acao == "girar":
+        if seed is not None and int(seed) >= 0:
+            torch.manual_seed(int(seed))
+        escolhido, modo = int(torch.multinomial(p, 1)), "roleta"
+        dentro = True
+    else:
+        escolhido = modo = None
+        dentro = None
+    if escolhido is not None:
+        saida["sorteado"] = {"modo": modo, "dentro": dentro, **quem(escolhido)}
     return saida
 
 

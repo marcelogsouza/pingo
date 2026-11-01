@@ -506,6 +506,113 @@ def test_lab_lmhead_e_attn_compartilham_o_mesmo_forward(ambiente):
     assert servidor._captura is antes
 
 
+# ---------------------------------------------------------------- passo ⑥ · amostragem (a roleta)
+
+
+def test_lab_amostra_menu_vem_dos_logits_reais_caroneados(ambiente):
+    cliente, servidor = ambiente
+    ids = [4, 9, 10, 5]                       # <|user|> oi mundo <|assistant|>
+    r = cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": ids})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["modelo"] == "sft" and d["n"] == 4 and d["vocab"] == len(VOCAB)
+    assert d["acao"] == "menu" and "sorteado" not in d
+    assert d["retidos"] == len(VOCAB)                       # T=1 sem filtro: todos giram
+    graus = sum(c["graus"] for c in d["candidatos"])
+    assert abs(graus - 360.0) < 0.6                         # a roda fecha em 360°
+    probs = [c["prob"] for c in d["candidatos"]]
+    assert probs == sorted(probs, reverse=True)
+    assert {c["kind"] for c in d["candidatos"]} <= set(CATEGORIAS)
+    linha = servidor._captura[1]["logits"][-1]              # a carona do ③–⑤, sem recomputar
+    assert d["candidatos"][0]["id"] == int(linha.argmax())
+    assert not servidor.gen_lock.locked()
+
+
+def test_lab_amostra_e_lmhead_compartilham_a_captura(ambiente):
+    """⑥ é carona do MESMO forward: a captura em cache não é refeita nem substituída."""
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": [4, 9],
+                                                 "i": 1}).status_code == 200
+    antes = servidor._captura
+    assert cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": [4, 9],
+                                                  "acao": "girar"}).status_code == 200
+    assert servidor._captura is antes
+
+
+def test_lab_amostra_semente_repete_o_giro_e_o_filtro_corta(ambiente):
+    cliente, _ = ambiente
+    corpo = {"modelo": "sft", "ids": [4, 9], "seed": 7, "acao": "girar", "top_k": 3}
+    a = cliente.post("/api/lab/amostra", json=corpo).get_json()
+    b = cliente.post("/api/lab/amostra", json=corpo).get_json()
+    assert a["retidos"] == 3 and len(a["candidatos"]) == 3
+    assert a["sorteado"]["id"] == b["sorteado"]["id"]       # mesma semente, mesmo giro
+    assert a["sorteado"]["id"] in {c["id"] for c in a["candidatos"]}
+    assert a["end_id"] == VOCAB["<|end|>"]                  # a tela precisa saber onde a história para
+
+
+def test_lab_amostra_forcar_obedece_ate_fora_do_filtro(ambiente):
+    cliente, _ = ambiente
+    alvo = VOCAB["resposta"]
+    d = cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": [4, 9], "acao": "forcar",
+                                               "token": alvo, "top_k": 1}).get_json()
+    assert d["sorteado"]["id"] == alvo and d["sorteado"]["modo"] == "mão"
+    dentro = d["candidatos"][0]["id"] == alvo
+    assert d["sorteado"]["dentro"] is dentro
+    if not dentro:
+        assert d["sorteado"]["prob"] == 0.0 and d["sorteado"]["p_bruto"] > 0
+    assert cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": [4, 9],
+                                                  "acao": "forcar", "token": 999}).status_code == 400
+    assert cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": [4, 9],
+                                                  "acao": "nada"}).status_code == 400
+
+
+def test_lab_amostra_valida_entradas_reserva_o_teto_e_para_duas(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": ["x"]}).status_code == 400
+    d = cliente.post("/api/lab/amostra", json={"modelo": "sft", "ids": [9] * 400}).get_json()
+    assert d["n"] == 160 and d["cortado_em"] == 160         # teto do laboratório, avisado
+    assert servidor.gen_lock.acquire(blocking=False)
+    try:
+        assert cliente.post("/api/lab/amostra",
+                            json={"modelo": "sft", "ids": [4, 9]}).status_code == 429
+    finally:
+        servidor.gen_lock.release()
+
+
+def test_lab_desdobrar_continua_a_historia_ate_o_fim(ambiente):
+    cliente, servidor = ambiente
+    ids = [4, 9]                                            # <|user|> oi
+    r = cliente.post("/api/lab/desdobrar", json={"modelo": "sft", "ids": ids,
+                                                 "temperature": 0, "max_new_tokens": 6})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["modelo"] == "sft" and d["n_novos"] == len(d["tokens"])
+    assert d["parada"] in ("end_token", "max_tokens")
+    if d["parada"] == "end_token":
+        assert d["tokens"][-1]["id"] == VOCAB["<|end|>"]    # o <|end|> é emitido e fecha
+    assert all(t["token"] in VOCAB for t in d["tokens"])
+    assert isinstance(d["texto"], str)
+    assert not servidor.gen_lock.locked()
+
+
+def test_lab_desdobrar_semente_reproduz_a_continuacao(ambiente):
+    cliente, _ = ambiente
+    corpo = {"modelo": "sft", "ids": [4, 9], "seed": 42, "temperature": 0.8, "top_p": 0.9,
+             "max_new_tokens": 4}
+    e = cliente.post("/api/lab/desdobrar", json=corpo).get_json()
+    f = cliente.post("/api/lab/desdobrar", json=corpo).get_json()
+    assert [t["id"] for t in e["tokens"]] == [t["id"] for t in f["tokens"]]
+    assert e["segundos"] >= 0
+
+
+def test_lab_desdobrar_valida_entradas(ambiente):
+    cliente, _ = ambiente
+    assert cliente.post("/api/lab/desdobrar", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/desdobrar",
+                        json={"modelo": "ninguem", "ids": [4, 9]}).status_code == 400
+
+
 # ------------------------------------------------------------------ busca de vocab
 
 
@@ -538,6 +645,7 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     assert "/api/lab/matriz" in corpo and "/api/lab/stats" in corpo and "/api/lab/lida" in corpo
     assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo and "/api/lab/bloco" in corpo
     assert "/api/lab/lmhead" in corpo
+    assert "/api/lab/amostra" in corpo and "/api/lab/desdobrar" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 
