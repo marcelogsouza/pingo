@@ -31,7 +31,7 @@ captura serve os dois). Suíte: **163 testes verdes**.
 | dataset | `data/sft/final/` (26.479/1.581/1.455) | ✅ validado, sem vazamento |
 | SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
 | avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
-| WebUI | `uv run python scripts/webui.py` → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming |
+| WebUI | `./scripts/webui.sh` (Ctrl+C desliga) → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming |
 | modo didático | mesma UI, rota **`/lab`** (lógica em `pingo/didatic.py`, página em `web/lab.html`) | ✅ passos ①–④; ⑤–⑦ por fazer — o `capture` já serve atenção **e** bloco; trocar camada no ④ custa 12 ms (a captura do ③ é a mesma) |
 
 - **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas

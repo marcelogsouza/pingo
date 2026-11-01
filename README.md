@@ -125,6 +125,7 @@ Os scripts de dados/tokenizer rodam em qualquer máquina; o treino usa uma GPU N
 ### WebUI (chat no navegador)
 
 ```bash
+./scripts/webui.sh                          # sobe no foreground; Ctrl+C desliga
 uv run python scripts/webui.py            # http://127.0.0.1:8010 e http://<ip-da-lan>:8010
 uv run python scripts/webui.py --host 127.0.0.1   # só esta máquina
 ```
@@ -141,7 +142,8 @@ formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 ### Modo didático — `/lab`
 
 A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. Os
-passos ①, ② e ③ estão prontos — **tokenização**, **embedding** e **RoPE + atenção**:
+passos ①, ②, ③ e ④ estão prontos — **tokenização**, **embedding**, **RoPE + atenção** e
+**RMSNorm + SwiGLU**:
 
 - o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
   número, byte puro), cada um com o **id** da tabela embaixo;
@@ -159,13 +161,18 @@ passos ①, ② e ③ estão prontos — **tokenização**, **embedding** e **Ro
   1 volta a cada ~6 posições até ~47 mil, com um ponto verde que confere a rotação contra o Q
   capturado), o **radar de atenção** do token escolhido (uma linha por cabeça, clique abre a
   cabeça em detalhe) e a **matriz n×n com a máscara causal visível**.
+- no passo ④ aparece o resto do bloco, na **carona do mesmo forward**: a **régua do RMSNorm**
+  (‖x‖ de cada token entra torto; o RMSNorm puro devolve √896 = 29,93 para *todos*; o γ
+  aprendido modula dimensão a dimensão) e o **gate do SwiGLU** — gate, up e o produto desenhados
+  na mesma escala, com o número de portas abertas das 2.304 (`Ġinvestir` acende ~151).
 
 Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
-O ③ carrega o modelo no device do servidor — respeita o lock do chat (devolve aviso se ele está
-falando) e limita a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual (0,66 s o
-forward de uma frase curta; na GPU livre são 0,64 s já com o load do modelo). Os passos ④–⑦
-(RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem
-como "em breve" — o `capture` do ③ já entrega boa parte do que eles vão desenhar.
+Os passos ③–④ carregam o modelo no device do servidor — **um único forward serve os dois**
+(trocar camada custa ~12 ms pela captura em cache); respeitam o lock do chat (devolvem aviso se
+ele está falando) e limitam a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual
+(0,66 s o forward de uma frase curta; na GPU livre são 0,64 s já com o load do modelo). Os
+passos ⑤–⑦ (lm head, amostragem, loop) aparecem como "em breve" — o `capture` já entrega o
+bloco todo; para o ⑤ falta só a `norm` final e os 16.387 logits.
 Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 ## Aviso

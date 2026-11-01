@@ -7,10 +7,10 @@ atualizado: 2026-11-01
 # Suíte de testes
 
 ```bash
-uv run pytest -q      # 156 passed in ~13 s (medido em 2026-11-01)
+uv run pytest -q      # 163 passed in ~13 s (medido em 2026-11-01)
 ```
 
-**156 casos coletados de 148 funções de teste** em 12 arquivos. Tudo roda em **CPU** (config
+**163 casos coletados de 155 funções de teste** em 12 arquivos. Tudo roda em **CPU** (config
 tiny, tempo curto) — a GPU não é necessária para validar o código, só para treinar.
 
 ## Por arquivo
@@ -20,15 +20,15 @@ tiny, tempo curto) — a GPU não é necessária para validar o código, só par
 | `test_smoke.py` | 2 | deps importam, pacote carrega |
 | `test_tokenizer.py` | 3 | especiais (0/1/2), roundtrip **byte-exato**, byte fallback, compressão em pt |
 | `test_data.py` | 5 | memmap, shapes, `y = shift(x)`, determinismo por rng, janela que cabe no shard, integração com os `.bin` reais |
-| `test_model.py` | 22 | **contagem de params 127.555.456**, tie, shapes, init escalado, **invariância relativa do RoPE**, equivalência do KV cache (`<1e-5`), buffers pré-alocados, overflow, overfit→loss<0.05, sampling, generate, save/load bit-exato, **`capture` do ③**: logits **bit a bit** iguais com captura pedida, pesos que somam 1 com triângulo futuro zerado, `q` capturado == `apply_rope(q_lin)` do próprio modelo |
+| `test_model.py` | 23 | **contagem de params 127.555.456**, tie, shapes, init escalado, **invariância relativa do RoPE**, equivalência do KV cache (`<1e-5`), buffers pré-alocados, overflow, overfit→loss<0.05, sampling, generate, save/load bit-exato, **`capture` do ③**: logits **bit a bit** iguais com captura pedida, pesos que somam 1 com triângulo futuro zerado, `q` capturado == `apply_rope(q_lin)` do próprio modelo; **bloco do ④**: `x0` é o embedding, RMSNorm puro tem norma **√d**, `x2 = x1 + m`, `s = silu(g)·u`, e `x2` do bloco *k* == `x0` do bloco *k+1* (bit a bit) |
 | `test_train.py` | 5 | lr warmup+cosine, grupos de decay, **decay com pesos de `--compile`**, **resume bit-exato** (6 == 3+3), payload do ckpt + logs |
 | `test_sample.py` | 6 | ppl ≈ ln V no init, cache × naive com **mesmos tokens**, speedup reportado, corte de ctx, repetition penalty quebra o loop, relatório JSON |
 | `test_gen_sft.py` | 21 | limpeza de parágrafos, filtro de fonte, chunking sem cortar frase, pesos dos tipos, todas as regras de `validate()`, reamostragem, `inacabável` não trava, prompt por modo, blocklists, HTTP fake, ponta a ponta |
 | `test_validate_sft.py` | 24 | evidência tolerante a whitespace, `is_pt` curto, contrato do exemplo, shingles/Jaccard, **LSH acha quase-duplicata**, LSH barra trecho republicado, **não indexa rejeitados**, split determinístico por doc, ponta a ponta, idempotência dos tokens de chat, `render`, juiz fake |
 | `test_train_sft.py` | 9 | **collate desloca labels** e mascara prompt/pad, loss ignora prompt/padding, padding não contamina posições reais, **resize na média + re-tie**, tokens de chat estáveis, descarte por tamanho, ckpt/best/final/log, **resume bit-exato**, dataset vazio avisa |
 | `test_eval_sft.py` | 12 | F1 extremos/caixa, `apoio` com stem, limpeza de tokens de chat, recusa por modo, `terminou`, agregação sem contaminar com `None`, lista vazia, resolve tokenizer do modelo, ponta a ponta com modelo tiny |
-| `test_webui.py` | 30 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior, rotas do `/lab` (invólucro `<\|user\|>…<\|assistant\|>` sem `Pergunta:`, embedding **sem carregar o modelo**, busca, vocab mismatch; passo ②: matriz linha-por-token com teto de ids, stats da tabela, lida tied nota×cosseno; passo ③: pesos reais causais por cabeça, cache da captura, `rope` confere a rotação, 429 do `gen_lock`) |
-| `test_didatic.py` | 17 | **alfabeto byte-level** (`ĠatÃ©` são os bytes de ` até`), categoria dos tokens, fatia pelos `offsets`, repetições e acentos, corte em 512, `embed.weight` lido do `.safetensors` na CPU, norma e vizinhos por cosseno ordenados, busca no vocab; passo ②: `faixa` preserva o **maior módulo** de cada grupo, matriz linha-por-token + corte honesto, histograma que soma o vocab, `lida_de_volta` = produto escalar conferido na mão; integração com o tokenizer real (pula sem `runs/`) |
+| `test_webui.py` | 30 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior, rotas do `/lab` (invólucro `<\|user\|>…<\|assistant\|>` sem `Pergunta:`, embedding **sem carregar o modelo**, busca, vocab mismatch; passo ②: matriz linha-por-token com teto de ids, stats da tabela, lida tied nota×cosseno; passo ③: pesos reais causais por cabeça, cache da captura, `rope` confere a rotação, 429 do `gen_lock`; passo ④: régua/γ/faixas do bloco, `400`/`429`, e **a captura do ③ serve o ④** — um forward só) |
+| `test_didatic.py` | 20 | **alfabeto byte-level** (`ĠatÃ©` são os bytes de ` até`), categoria dos tokens, fatia pelos `offsets`, repetições e acentos, corte em 512, `embed.weight` lido do `.safetensors` na CPU, norma e vizinhos por cosseno ordenados, busca no vocab; passo ②: `faixa` preserva o **maior módulo** de cada grupo, matriz linha-por-token + corte honesto, histograma que soma o vocab, `lida_de_volta` = produto escalar conferido na mão; passo ④: `faixa_de` nos picos, `ficha_bloco` com a **régua √d**, γ com média/extremos e o SwiGLU do token; integração com o tokenizer real (pula sem `runs/`) |
 
 ## Os cinco testes que valem por uma tarde de debugging
 

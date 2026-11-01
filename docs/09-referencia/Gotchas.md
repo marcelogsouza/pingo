@@ -265,10 +265,10 @@ gerar, o chat continua em `montar_prompt()`; o lab é leitura, não geração.
 Primeiro cola na página, depois pinta (`pintarFaixa` depois do `appendChild`). Vale para o
 histograma e para o mapa de atenção do passo ③.
 
-**O modo didático não pode chamar `Server.carregar()` — exceto o passo ③, por contrato.**
+**O modo didático não pode chamar `Server.carregar()` — exceto ③–④, por contrato.**
 `carregar()` sobe o modelo para a VRAM — exatamente o que a regra do professor proíbe. As rotas
 `/api/lab/*` usam `tokenizador_de()` e `tabela_de()`, que ficam na CPU. A exceção deliberada é
-`/api/lab/attn|rope` → `Server.captura_atencao()`: carrega o modelo no device do servidor sob
+`/api/lab/attn|rope|bloco` → `Server.captura_atencao()`: carrega o modelo no device do servidor sob
 `gen_lock` (429 se o chat está gerando), teto de 64 tokens e cache de uma captura. Com o
 professor servindo, rode o servidor em `--device cpu` — o forward de 11 tokens leva 0,66 s (na
 GPU livre são 0,64 s já incluindo o load; a captura fica em cache por `modelo+ids`, então
@@ -278,6 +278,17 @@ trocar só camada/cabeça custa microssegundos). Nunca derrube o professor por c
 par que roda junto é **(xⱼ, xⱼ₊₃₂)** — 32 dimensões adiante, não (x₂ᵢ, x₂ᵢ₊₁). Um relógio que
 gire coordenadas adjacentes mostra outra matemática; no `/lab` o `head_dim/2` vem da captura e
 o teste de equivalência com o `RoPE` do modelo fecha a porta.
+
+**O dict do `capture` é um só por bloco e tem 17 chaves agora.** ③ escreveu `q_lin/q/k_lin/k/w`
+e ④ escreveu o bloco (`x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`) **no mesmo dict** — quem iterar as
+chaves ou fixá-las em teste precisa esperar as duas famílias (o teste do ③ fixa o conjunto
+inteiro de propósito: crescer a carona é decisão consciente, não acidente).
+
+**A captura serve ③ e ④, mas há UMA vaga.** `Server._captura` guarda o último forward (chave
+`modelo+ids`, ~60 MB de tensores fp32 com 64 tokens). Duas abas com frases diferentes se
+calcaram: cada troca refaz o forward. Trocar camada/cabeça/token na MESMA frase é de graça
+(4–12 ms). E o ⑤ não tem nada novo para capturar de graça ainda: a `norm` final + os logits
+precisam entrar na carona antes.
 
 ## Ver também
 

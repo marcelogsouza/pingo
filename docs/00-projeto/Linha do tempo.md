@@ -80,10 +80,13 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | — | — | Suíte: **149 casos** em 12 arquivos (+4 `test_didatic`, +4 `test_webui`) |
 | — | `f3be8f5` | **Modo didático passo ③ (RoPE + atenção)**: `capture` no forward (sem captura, bit a bit idêntico — teste), relógio do RoPE com os 32 ponteiros de um Q real + ponto verde de conferência, radar do token por cabeça, matriz n×n com a máscara causal visível; as primeiras rotas do lab que carregam o modelo (gen_lock, 64 tokens, 0,66 s de forward na CPU) — Q/K conferidos no checkpoint: ‖q_lin‖=‖q‖ e o par 0 batendo 4 decimais; repetido na GPU depois que o Strata saiu (0,64 s com o load, 0,004 s com a captura em cache, valores idênticos aos da CPU) ([[Modo didático]]) |
 | — | — | Suíte: **156 casos** em 12 arquivos (+4 `test_model` de capture, +3 rotas do ③) |
+| — | `1fb5fc0` | **Modo didático passo ④ (RMSNorm + SwiGLU)**: a carona do ④ **estende, não bifurca** — o `capture` ganha o bloco inteiro (`x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2` + os γ), preenchido na passagem real sem duplicar a conta (logits seguem bit a bit idênticos; `x2[k] == x0[k+1]` e ‖RMSNorm puro‖ = √d são testes). Rota `/api/lab/bloco` e três cards: a **régua** (‖x‖ → RMS puro → com γ → Δ da camada), o **γ desenhado** (faixa alternável attn/MLP) e o **SwiGLU** (gate/up/produto na mesma escala + portas abertas). **Um único forward serve ③ e ④**: trocar camada custa 12 ms. Números no SFT: RMS puro 29,92 p/ todos — chat 29,69 (o piso do ε); γ da camada 1 quase unânime (0,86–0,93); resíduo cresce **100×** até a camada 12; `Ġinvestir` abre **151 de 2.304** portas ([[Modo didático]]) |
+| — | — | Suíte: **163 casos** em 12 arquivos (+1 `test_model` do bloco, +3 `test_didatic` da ficha do bloco, +3 `test_webui` da rota — incluindo *a captura do ③ serve o ④*) |
+| — | `5befef1` | `scripts/webui.sh`: levanta a WebUI em foreground com **Ctrl+C desligando tudo** (e derruba a instância anterior na 8010); conferido de ponta a ponta antes do teste na GPU livre |
 
-O passo 1 de uma esteira de sete (tokenização → embedding → RoPE/atenção → MLP → lm head →
-amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar o
-modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
+Quatro dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
+head → amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar
+o modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
 
 ## Como o dia 2 terminou
 
@@ -107,7 +110,7 @@ flowchart LR
         sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
     subgraph "2026-11-01"
-        lab["modo didático<br/>(/lab · passo 1)"]
+        lab["modo didático<br/>(/lab · passos ①–④)"]
     end
     p6a --> p6b --> p7
     wui --> lab
