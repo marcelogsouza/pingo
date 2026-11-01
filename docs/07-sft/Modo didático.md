@@ -4,13 +4,13 @@ etapa: 0
 atualizado: 2026-11-01
 ---
 
-# Modo didático (`/lab`) — passos ①–④: tokenização, embeddings, RoPE + atenção, bloco
+# Modo didático (`/lab`) — passos ①–⑤: tokenização, embeddings, RoPE + atenção, bloco, lm head
 
 O Pingo é um **projeto-curso** ([[Visão e filosofia]]): o valor está tanto no modelo quanto em
 conseguir *mostrar* o que acontece dentro dele. O modo didático é a tela que faz isso — um
 "laboratório" na mesma WebUI, com uma esteira de etapas no topo (tokenização → embeddings →
-atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–④
-estão prontos, ⑤–⑦ aparecem marcados "em breve".
+atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–⑤
+estão prontos, ⑥–⑦ aparecem marcados "em breve".
 
 ```
 http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
@@ -59,6 +59,17 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 | **as três faixas do SwiGLU** — gate, up e o produto, na *mesma escala*, uma sobre a outra | `down(silu(gate)·up)` vira uma imagem só: o produto tem picos onde gate e up concordam e vales quase zero onde o gate fechou — a esparsidade aparece entre as três |
 | **contas do token** | "portas abertas: 151 de 2.304" (força ≥ 10% da mais forte) e "‖Δ‖ num resíduo de ‖x‖" — a lição de que o modelo guarda fato como um punhado de neurônios, e de que cada camada soma pouco (por isso são 12) |
 | controles camada(12) × token, **sem novo forward** | a captura do ③ (chave `modelo+ids`) serve os dois: trocar camada no ④ custa 12 ms na CPU |
+
+## O que a tela faz (passo ⑤)
+
+| elemento | por quê |
+|---|---|
+| **chips de posição** | os logits dependem da posição: cada linha da frase prediz o próximo token, e a última (`<\|assistant\|>`) é o cardápio da geração — é o ponto onde o chat está quando o ⑥ entrar |
+| **a última régua** (‖x₂‖ → RMSNorm puro → com γ) | o modelo ainda aplica **um RMSNorm final** antes da tabela; a lição do ④ vale para o vetor que o lm head vai ler, e a faixa do **γ final** desenhada mostra a opinião dele |
+| **a régua de 16.387 logits** | o vocab inteiro de uma vez em 128 pingos (cada um, o maior \|valor\| de um grupo de ~129 linhas) — a imagem de que o lm head não é mais uma camada: é o produto escalar com a **mesma tabela do passo ①** |
+| **os 10 que ganharam** | os candidatos que o passo ⑥ vai pesar; clicar num token abre a ficha dele — a mesma ficha/tabela do ①, fechando o ciclo do curso |
+| **o próximo token real: nota e posto** | professor-forcing honesto: "o que o modelo achava que vinha aqui" vs o que a frase tinha — em `Ġinvestir → até`, o sucessor real ficou em **5º de 16.387** |
+| **a mesma tabela lida duas vezes** | lado a lado: a prévia do ② (vetor inicial × tabela) e o logit real do ⑤ (vetor final × tabela) — se as ordens fossem iguais, as 12 camadas não teriam feito nada |
 
 ## As nove decisões que importam
 
@@ -144,6 +155,19 @@ os tokens. Capturar o RMSNorm **antes do γ** é o ponto: a lição é "todo vet
 (ε vira piso). Consequência de projeto: a captura cacheada por `modelo+ids` serve o ③ e o ④
 com um único forward — a segunda camada do ④ responde em 12 ms na CPU.
 
+**10. O ⑤ também é carona — e o tie sai provado com número.** `PingoLM.forward` com `capture`
+agora escreve `nfinp/nfin` (a norm final **antes/depois do γ**, pelas mãos do próprio
+`RMSNorm`) no **último** dict, e o `Server.captura_atencao` guarda também os **logits do
+próprio forward** (`out.logits`, `[T, vocab]`): o ⑤ não recomputa o lm head, mostra o que o
+modelo produziu. O teste exige `logits == nfin @ embed.weightᵀ`, e no checkpoint real a
+recomputação com a tabela lida do `safetensors` na CPU bate com os logits do forward
+**bit a bit (maxdiff 0,0)** — "o lm head é a tabela do passo ①" deixou de ser frase de aula e
+virou asserção da suíte. A captura continua UMA por `modelo+ids` (agora serve ③, ④ e ⑤): o
+forward de 11 tokens custa 0,09 s na CPU quente e cada posição nova do ⑤, 16 ms. O lm head
+não escolhe nada — só dá notas; a escolha é o ⑥, e é por isso que o card mostra o **rank** do
+sucessor real da frase (professor forcing): em `investir → até`, o token certo ficou em 5º de
+16.387 — quase sempre o modelo sabia, e dá para *mostrar* o quase.
+
 ## O contrato (o que o front-end recebe)
 
 ```
@@ -174,12 +198,19 @@ POST /api/lab/bloco {modelo, ids[], camada, i}   // ④: a MESMA captura do ③ 
       gamma:{attn:{media,min,max,std,faixa[bins]}, mlp:{…}},
       mlp:{g[bins], u[bins], s[bins], escala, maior{j,valor}, abertas, forca_max,
            delta, residuo}}
+POST /api/lab/lmhead {modelo, ids[], i, k?}      // ⑤: a MESMA captura do ③ (gen_lock!)
+   → {n, d, vocab, bins, i, raiz_d, modelo, n_camadas,
+      tokens:[{i, id, token, texto, x2, nfinp, nfin}],   // a régua da norm final
+      gamma:{media,min,max,std,faixa[bins]},             // γ da norm final
+      top:[{id, token, texto, logit}],                   // os k (10) maiores logits
+      proximo:{id, token, texto, logit, rank}|None,      // o sucessor real na frase (⑥ pide)
+      faixa[bins], escala, estat:{media,min,max,std}, norma:{maior_x2, maior_nfin}}
 ```
 
 Tetos: 4.000 caracteres no pedido, 512 chips desenhados (`cortado_em` avisa), 96 linhas de
-matriz (`MATRIZ_LINHAS`) e 64 tokens na captura do forward (`MAX_ATTN_TOKENS`; ③ e ④ dividem
-o teto e a captura). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU); a página
-é `web/lab.html`; as rotas em `scripts/webui.py` são finas.
+matriz (`MATRIZ_LINHAS`) e 64 tokens na captura do forward (`MAX_ATTN_TOKENS`; ③, ④ e ⑤
+dividem o teto e a captura). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU);
+a página é `web/lab.html`; as rotas em `scripts/webui.py` são finas.
 
 ## O que os números reais do Pingo mostram nesta tela
 
@@ -255,14 +286,40 @@ serve os dois):
   ≥ 10% da mais forte (#1027, valor 2,23); na camada 12, 185 abertas e a mais forte vale
   14,07. O `<|user|>` abre **490** — o token mal treinado é também o mais difuso.
 
+No passo ⑤ (medidos no mesmo checkpoint e na mesma frase; forward+captura **0,09 s** na CPU
+quente — os 0,66 s do ③ a frio continuam o teto — e **16 ms** por posição nova, com a
+captura em cache; `MAX_ATTN_TOKENS` continua 64):
+
+- **a última régua também é literal, e aqui o ε não salva ninguém**: os vetores que chegam
+  ao lm head medem ‖x₂‖ de **28,8 a 57,7** (o maior é o `<|user|>`, o mesmo torto do ④), e o
+  RMSNorm puro devolve **29,93 a todos os 11 tokens** — sem o piso 29,69 dos tokens de chat
+  do ④: depois de 12 camadas nenhum vetor é pequeno o bastante para o ε pesar.
+- **o γ final é o botão de volume do modelo**: média **1,610** (min 1,276, max 1,695, σ só
+  **0,061**) — quase não distingue dimensões (σ), mas estica o vetor todo ~1,6×: todas as
+  normas saem 29,93 → **46,3–47,6**. Como a nota do lm head é produto escalar, isso multiplica
+  todos os logits: é o oposto do γ da camada 1 (≈0,89, que quase encolhia).
+- **o tie provado com número**: recomputar `nfin @ tabelaᵀ` com a tabela lida do
+  `safetensors` na CPU devolve os logits do forward **bit a bit (maxdiff 0,0)**. A frase
+  "o lm head é a mesma tabela do passo ①" agora tem teste na suíte.
+- **a posição da geração** (o `<|assistant|>` final): campeão `A` logit **13,34**, depois
+  `O` 10,62 e `NÃ£o` (= `Não`) 10,40; a massa tem média −3,40, σ 2,40 e mín −12,07. O cardápio do ⑥.
+- **professor forcing**: para `Ġinvestir`, o sucessor real da frase (`ĠatÃ©`, o ` até`) levou
+  logit **9,50 — posto 5º de 16.387**; o favorito do modelo era `ĠR` (11,88 — o fantasma do
+  `R$`, o resto do top-3 é `ĠUS` e `Ġde`). O modelo quase sempre sabia a palavra e o rank
+  mostra o quase.
+- **② × ⑤, a mesma tabela lida duas vezes**: para `Ġinvestir`, o campeão da prévia do ②
+  (vetor inicial) é *ele mesmo* (1,027 = ‖e‖²); no vetor final (⑤) o campeão é outro mundo
+  (`ĠR`, 11,88). As camadas não criaram pesos novos: mexeram no vetor.
+
 ## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
 
-`⑤ lm head — a mesma tabela` (a prévia já roda no ②; para o logit real falta capturar a
-`norm` final + o `lm_head` — o `x2` da última camada a captura do ④ já entrega) ·
-`⑥ amostragem` · `⑦ loop`. O andaime do ③–④ já resolveu a parte difícil: o `capture`
-entrega os intermediários que ⑤–⑥ precisam, e as rotas que carregam o modelo já sabem
-obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com o professor
-servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com aviso antes.
+`⑥ amostragem` — softmax, temperatura, top-k/top-p e o porquê do `repetition_penalty` no
+120M (os logits reais do ⑤ já são a matéria-prima; `generate_stream` tem a conta toda) ·
+`⑦ loop` — o token escolhido volta como entrada; KV cache em ação. O andaime do ③–⑤ já
+resolveu a parte difícil: o `capture` entrega os intermediários, e as rotas que carregam o
+modelo já sabem obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com
+o professor servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com
+aviso antes.
 
 ## Ver também
 

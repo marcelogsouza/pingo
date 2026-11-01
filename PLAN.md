@@ -111,7 +111,7 @@ pingo/
 9. **Mid-training / SFT** — dataset de instruções pt (ex.: datasets pt-BR de instruções no HF). ✔ *feito em 2026-10-30/31: SFT-1..4 + 30k pares; o run que vale é `runs/sft-120m-ep1`.*
 10. **RLHF** — começar com **DPO** (dados de preferência pt-BR já existem, ex.: `Hub-Ai/ptbr-human-preferences`); PPO + reward model como opção avançada.
 11. **Avaliação formal** — benchmarks pt (ex.: tarefas estilo NeurIPS-BR-LP, hellaswag-pt).
-12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔, ② ✔, ③ ✔ e ④ ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
+12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔, ② ✔, ③ ✔, ④ ✔ e ⑤ ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
     - **② embedding** — ✔ 2026-11-01: o id → vetor (matriz), as normas de todos os vetores, e a prévia do `lm_head` tied (produto escalar ordena diferente do cosseno porque a nota inclui a norma).
     - **③ RoPE + atenção** — ✔ 2026-11-01 (requisito do Marcelo cumprido): `capture` no
       forward devolve `q_lin/q/k_lin/k` e os pesos `w` por camada (sem captura, forward bit a bit
@@ -126,10 +126,17 @@ pingo/
       (‖x‖ → RMS puro = √d para todos → com γ → Δ da camada), **γ desenhado** (faixa alternável
       attn/MLP com média/min/max/σ) e **SwiGLU** (gate, up e o produto na mesma escala + portas
       abertas e Δ vs resíduo). Trocar camada = 12 ms (captura em cache).
-    - **⑤ lm head** — os 16.387 logits, a mesma tabela do passo 1.
+    - **⑤ lm head** — ✔ 2026-11-01: a **norm final** e os **logits reais** pegam carona no
+      forward do ③ (o último dict do `capture` ganhou `nfinp/nfin`; o `Server` guarda
+      `out.logits` [64×16.387] — nada é recomputado). Quatro cards: **última régua** por token
+      (‖x₂‖ 28,8–57,7 → 29,93 para todos → 46–48 com γ), **γ final desenhado** (média 1,61 —
+      o botão de volume do produto escalar), **16.387 logits** (strip do vocab + top-10 +
+      posto e nota do sucessor real: `até` em 5º de 16.387) e **a mesma tabela lida duas
+      vezes** (prévia ② × logit real ⑤). Tie provado: `logits == nfin @ tabelaᵀ` bit a bit
+      (maxdiff 0,0) — teste na suíte. 16 ms por posição (captura em cache, a mesma do ③/④).
     - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.
     - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação.
-    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③ e ④ entregues cumprem o critério (`capture` + `gen_lock` + teto de 64, **um forward só** para os dois; com o professor servindo, `--device cpu`).
+    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③, ④ e ⑤ entregues cumprem o critério (`capture` + `gen_lock` + teto de 64, **um único forward** para os três; com o professor servindo, `--device cpu`).
 
 ## Decisões fechadas ✔
 

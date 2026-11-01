@@ -142,8 +142,8 @@ formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 ### Modo didático — `/lab`
 
 A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. Os
-passos ①, ②, ③ e ④ estão prontos — **tokenização**, **embedding**, **RoPE + atenção** e
-**RMSNorm + SwiGLU**:
+passos ①, ②, ③, ④ e ⑤ estão prontos — **tokenização**, **embedding**, **RoPE + atenção**,
+**RMSNorm + SwiGLU** e **lm head**:
 
 - o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
   número, byte puro), cada um com o **id** da tabela embaixo;
@@ -165,15 +165,20 @@ passos ①, ②, ③ e ④ estão prontos — **tokenização**, **embedding**, 
   (‖x‖ de cada token entra torto; o RMSNorm puro devolve √896 = 29,93 para *todos*; o γ
   aprendido modula dimensão a dimensão) e o **gate do SwiGLU** — gate, up e o produto desenhados
   na mesma escala, com o número de portas abertas das 2.304 (`Ġinvestir` acende ~151).
+- no passo ⑤ (também de carona), a **norm final** e os **logits reais**: a régua do RMSNorm que
+  fecha o modelo, o γ final desenhado, e os **16.387 logits** da posição escolhida — o vocab
+  inteiro como régua de notas + os 10 que ganharam, com a nota e o posto do token que veio de
+  fato (`investir → até` ficou em **5º de 16.387**). A mesma tabela do passo ①, lida de volta
+  com o vetor *final* — o tie (`lm_head` = embeddings) comprovado bit a bit contra o checkpoint.
 
 Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
-Os passos ③–④ carregam o modelo no device do servidor — **um único forward serve os dois**
-(trocar camada custa ~12 ms pela captura em cache); respeitam o lock do chat (devolvem aviso se
-ele está falando) e limitam a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual
-(0,66 s o forward de uma frase curta; na GPU livre são 0,64 s já com o load do modelo). Os
-passos ⑤–⑦ (lm head, amostragem, loop) aparecem como "em breve" — o `capture` já entrega o
-bloco todo; para o ⑤ falta só a `norm` final e os 16.387 logits.
-Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
+Os passos ③–⑤ carregam o modelo no device do servidor — **um único forward serve os três**
+(trocar camada custa ~12 ms e mudar de posição no ⑤, ~16 ms, pela captura em cache); respeitam
+o lock do chat (devolvem aviso se ele está falando) e limitam a frase a 64 tokens; com a VRAM
+ocupada, `--device cpu` serve igual (0,66 s o forward de uma frase curta; na GPU livre são
+0,64 s já com o load do modelo). Os passos ⑥–⑦ (amostragem, loop) aparecem como "em breve" —
+os logits reais que o ⑥ pesa já saem da captura do ⑤. Detalhes em
+[`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 ## Aviso
 
