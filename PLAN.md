@@ -146,11 +146,19 @@ pingo/
       consertado aqui**: o top-p do `sample_next` acumulava **logits**, não probabilidades —
       com logit positivo cortava tudo menos o favorito (padrão `top_p=1` não era afetado; runs
       e relatório não mudam; teste do nucleus na suíte).
-    - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação. O ⑥ já entrega a
-      matéria-prima: a história cresce token a token na tela e o desdobramento já usa
-      `generate_stream`/`PingoCache` — o passo ⑦ mostra **o cache**: o que é reusado e o que é
-      recomputado a cada token.
-    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③, ④, ⑤ e ⑥ entregues cumprem o critério (`capture` + `gen_lock` + tetos de 64/160, **um único forward** para ③–⑤ e o primeiro menu do ⑥; com o professor servindo, `--device cpu`).
+    - **⑦ loop** — ✔ 2026-11-01: o **caderno do `generate_stream`**. `roda_loop` no `didatic`
+      roda o loop do chat de verdade (mesma semente/penalidade/`sample_next` — teste confere
+      token a token) e anota por step: `entrou` (o escolhido anterior — **o token volta**),
+      `no_forward` (prefill = a frase; decode = 1), `escrito`/`cache_antes`/`cache_depois`/
+      `kv_lidos`/`sem_cache`. A **fita** (`PingoCache.snapshots()`; colunas antigas congeladas,
+      teste no `test_model`) mostra ‖K‖/‖V‖ por camada e posição; a **economia** conta
+      tokens-forward (29 vs 407 medidos) e o **`compara`** refaz o último step sem cache:
+      38,7 ms vs 20,6 ms com logits idênticos (maxdiff 4,8×10⁻⁶). Rota `/api/lab/loop`
+      (tetos 160 ids + 64 novos `MAX_LOOP_NOVOS`; `parada:contexto` quando o contexto manda) +
+      aba no `/lab` com replay stateless (o navegador anima; scrubber/⏯), fita acendendo uma
+      coluna por step e barras de preço. 0,65 s o request de 8+22 tokens na CPU. **A esteira
+      ①–⑦ fechou — não há mais etapa pendente no lab.**
+    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③, ④, ⑤, ⑥ e ⑦ entregues cumprem o critério (`capture` + `gen_lock` + tetos de 64/160/64, **um único forward** para ③–⑤ e o primeiro menu do ⑥; o ⑦ roda o loop real sob o mesmo lock; com o professor servindo, `--device cpu`).
 
 ## Decisões fechadas ✔
 

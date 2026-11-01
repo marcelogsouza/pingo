@@ -4,13 +4,14 @@ etapa: 0
 atualizado: 2026-11-01
 ---
 
-# Modo didático (`/lab`) — passos ①–⑥: tokenização, embeddings, RoPE + atenção, bloco, lm head, amostragem
+# Modo didático (`/lab`) — passos ①–⑦: tokenização, embeddings, RoPE + atenção, bloco, lm head, amostragem, loop + KV cache
 
 O Pingo é um **projeto-curso** ([[Visão e filosofia]]): o valor está tanto no modelo quanto em
 conseguir *mostrar* o que acontece dentro dele. O modo didático é a tela que faz isso — um
 "laboratório" na mesma WebUI, com uma esteira de etapas no topo (tokenização → embeddings →
-atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–⑥
-estão prontos, ⑦ aparece marcado "em breve".
+atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: **os sete passos
+estão prontos** — de ① (o texto vira ids) a ⑦ (o token escolhido volta, com o KV cache em
+cena).
 
 ```
 http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
@@ -98,6 +99,29 @@ escolha vai dar, deixando o modelo girar sozinho até o `<|end|>`.
 segura sessão entre requests: a roleta é *stateless* — o cliente manda a história inteira e
 a `captura_atencao` (chave `modelo+ids`) faz o resto do cache. Entrar no ⑤ com a mesma frase
 não refaz o forward nenhum, e vice-versa.
+
+## O que a tela faz (passo ⑦)
+
+Em palavras simples: tudo até aqui foi **um** step; o modelo conversa **repetindo-o**. O passo
+⑦ fecha o círculo: o token escolhido no ⑥ volta como **entrada** do step seguinte, e sobe ao
+palco o **KV cache** — o K e o V de todas as posições antigas, em todas as camadas, ficam na
+memória; o step novo só calcula a conta do token novo, e a atenção *lê* o cache. A tela **não
+encena um loop de mentira**: `roda_loop` roda o `generate_stream` do chat com um caderno de
+notas, e o navegador só toca o replay.
+
+| elemento | por quê |
+|---|---|
+| **o replay numa chamada só** | o servidor roda o loop inteiro (`generate_stream` de verdade — mesma semente, mesma penalidade, mesmo `sample_next`) e devolve um passo por forward; o cliente anima. Stateless como o ⑥, e **reprodutível**: mesma semente, mesmo replay, teste na suíte |
+| **os três painéis do step** | ↦ o que **entra** (prefill: a frase inteira; decode: o token que **voltou**, com a seta dizendo que foi ele o escolhido do step anterior) · a **conta** (tokens no forward, o que foi *escrito* no cache `antes → depois`, o que a atenção *leu*, e quanto o step pagaria **sem** cache) · o que a **roleta escolheu** (posto, p, nota — e ⟲ ele é a entrada do step seguinte) |
+| **scrubber + ⏯ + ⏮⏭** | o replay é do navegador; o aluno passeia pelos 22 steps do mesmo loop sem falar com o servidor de novo |
+| **a fita do cache (12 × posições)** | cada quadradinho é o K **e** o V de uma camada para uma posição — **21.504 números por posição** (12 camadas × 14 heads × 64 × 2), escritos **uma única vez**. O prefill acende a frase inteira; cada decode acende **uma coluna** (o âmbar mostra qual), e nenhuma coluna antiga muda nunca. Tooltip com ‖K‖ e ‖V‖ reais e o step em que a posição foi escrita |
+| **as barras de preço** | tokens-forward acumulados **com** cache (1 por step) vs **sem** cache (a história inteira de novo a cada step) — o O(n²) que ninguém paga, visível |
+| **o card da prova** | `roda_loop` refaz o **último step sem cache** (um forward da sequência que o cache comeu) e cronometra: na CPU real, **20,6 ms vs 38,7 ms** com os logits **idênticos** (maxdiff 4,8×10⁻⁶, mesmo argmax) — *o cache não muda a resposta, só o preço* (a equivalência já era teste da suíte desde o Passo 5) |
+| **sliders + semente** | os mesmos controles do ⑥ (T/top-k/top-p/penalidade) valem para o loop; a semente padrão 1234 chega reproduzível |
+
+Detalhe honesto do `compara`: no `end_token` o token de parada **foi escolhido mas nunca
+entrou num forward** — a comparação re-forwarda exatamente `seq[:, :cur_len]`, os tokens que
+o cache realmente comeu, e compara com a linha de logits daquele último forward.
 
 ## As dez decisões que importam
 
@@ -243,14 +267,26 @@ POST /api/lab/amostra {modelo, ids[], acao:menu|girar|forcar, token?, temperatur
 POST /api/lab/desdobrar {modelo, ids[], max_new_tokens?(≤96), …mesmos parâmetros}
    → {modelo, parada:max_tokens|end_token, n_novos, segundos, texto,   // generate_stream puro
       tokens:[{id, token, texto}]}
+POST /api/lab/loop {modelo, ids[], max_new_tokens?(≤64), …mesmos parâmetros do ⑥}
+   → {modelo, n, cortado_em, n_prefill, n_novos, parada:max_tokens|end_token|contexto,
+      camadas, heads, head_dim, filtros:{…}, semente?,
+      passos:[{k, modo:prefill|decode, entrou?{id,token,texto,kind}, no_forward, escrito,
+               cache_antes, cache_depois, kv_lidos, sem_cache, segundos,
+               escolhido?{id,token,texto,kind,modo,logit,p_bruto,rank,top1}}],
+      economia:{com_cache, sem_cache, numeros_por_posicao, bytes_por_posicao, cache_mb},
+      fita:{cur_len, normas_k[camadas][posições], normas_v[…]},   // ‖K‖/‖V‖ por camada e posição
+      compara:{tokens, com_cache_ms, sem_cache_ms, maxdiff, argmax_igual}|None}
 ```
 
 Tetos: 4.000 caracteres no pedido, 512 chips desenhados (`cortado_em` avisa), 96 linhas de
 matriz (`MATRIZ_LINHAS`) e 64 tokens na captura de atenção (`MAX_ATTN_TOKENS`; ③, ④ e ⑤
 dividem o teto e a captura). O ⑥ sobe o teto da captura para **160 tokens** entre frase e
 gerados (`MAX_AMOSTRA_TOKENS`) e o desdobramento a 96 novos — a captura do ⑥ é a mesma do
-③–⑤, só com chave maior. A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU);
-a página é `web/lab.html`; as rotas em `scripts/webui.py` são finas.
+③–⑤, só com chave maior. O ⑦ usa os mesmos 160 e limita a **64** os tokens novos
+(`MAX_LOOP_NOVOS`; o contexto do modelo ainda manda mais: `parada:contexto`). A lógica toda
+mora em `pingo/didatic.py` (puro, testado em CPU; o ⑦ é a única parte que recebe o *modelo*
+— não só tensores capturados); a página é `web/lab.html`; as rotas em `scripts/webui.py`
+são finas.
 
 ## O que os números reais do Pingo mostram nesta tela
 
@@ -382,16 +418,37 @@ o professor de pé — o modelo tiny de teste da suíte também exercita as duas
   nucleus {0,1} de uma linha em que o jeito velho devolveria só {0}. O padrão do chat
   (`top_p=1`) nunca era afetado — os runs e o relatório de 2,507 não mudam.
 
-## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
+No passo ⑦ (medidos no mesmo checkpoint com o servidor em `--device cpu` e o professor de
+pé; frase de 8 tokens + 22 gerados até o `<|end|>` — o request inteiro leva **0,65 s**):
 
-`⑦ loop` — o token escolhido volta como entrada e o **KV cache** entra em cena de verdade: o
-⑥ já mostra a história crescendo token a token (com `generate_stream` no desdobramento — a
-conta e o cache estão prontos e testados); falta o passo didático de mostrar o *cache* — o
-que o modelo reusa e o que ele recomputa a cada token novo. O andaime do ③–⑥ já resolveu a
-parte difícil: o `capture` entrega os intermediários, e as rotas que carregam o modelo já
-sabem obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com o
-professor servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com
-aviso antes.
+- **o passo a passo do loop real**: prefill de 8 tokens em **34 ms** (escreve 8 colunas);
+  cada decode **~20 ms**, escreve **1 coluna** e lê as que existem (9, 10, … 29). A última
+  coluna escrita é sempre a do token que acabou de voltar.
+- **o cache é pequeno e o preço não**: 29 posições ocupam **2,38 MB** (21.504 números × 4
+  bytes por posição), mas o replay todo custou **29 tokens-forward com cache contra 407 sem**
+  — 14× mais conta. Numa frase de 160+64, seria ~5 mil contra 224.
+- **a prova cronometrada**: o último step refeito sem cache num forward de 29 tokens leva
+  **38,7 ms contra 20,6 ms** com cache e devolve logits **idênticos** (maxdiff **4,8×10⁻⁶**,
+  mesmo argmax) — a equivalência do Passo 5 agora tem número na tela (na CPU fp32; com o
+  contexto cheio o lado sem cache escala com n e a diferença vira ordem de grandeza).
+- **o círculo fechado**: a história `Quanto a Companhia vai investir até → O resultado final
+  e vai buscar a unidade do Manhão para dar continuidade ao seu saldo de fidelidade.<|end|>`
+  mostra o `<|end|>` escolhido **sem voltar como entrada** — ele encerrou o loop (mesma
+  semântica do chat: emitido e break).
+- **reprodutível**: mesma semente (1234), dois replays idênticos token a token — teste na
+  suíte conferindo `roda_loop` contra `generate_stream` (mesma ordem de RNG, com e sem
+  penalidade de repetição).
+
+## A esteira fechou — e o que vem depois
+
+Os **sete passos** (① tokenização → ⑦ loop) estão no ar desde 2026-11-01: do byte ao token
+escolhido que volta como entrada, com o KV cache medindo-se passo a passo. Não há mais aba
+"em breve" no `/lab`. O resto do `PLAN.md` é modelo, não curso: SFT-5 (instruções gerais +
+replay de texto cru, para a recusa) e o Passo 8 (350M, suspenso). Se um ⑧ um dia existir
+(batch, janelas deslizantes, cache quantizado…), o andaime está posto: `capture` para os
+intermediários, `snapshots()` para o cache, `gen_lock` + tetos para a VRAM. O GPU pesado
+continua proibido com o professor servindo ([[Infra e GPU]]): a prática é `--device cpu` ou
+desligar o Strata com aviso antes.
 
 ## Ver também
 

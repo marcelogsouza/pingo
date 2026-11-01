@@ -684,7 +684,7 @@
   <section class="card">
     <h2>A fita do KV cache — o que o modelo segura entre um step e outro</h2>
     <p class="hint">Cada quadradinho é o K <b>e</b> o V de <b>uma camada para uma posição</b>:
-      <span id="p7porpos">1.792</span> números (heads × head_dim × 2), escritos
+      <span id="p7porpos">21.504</span> números (12 camadas × 14 heads × 64 × 2 K+V), escritos
       <b>uma única vez</b> e relidos por todos os steps seguintes. O prefill acendeu a frase
       inteira de uma vez; cada step novo acende <b>uma coluna só</b> — e nenhuma coluna antiga
       muda nunca. Passe o mouse para ver as normas ‖K‖ e ‖V‖ e quando a posição foi escrita.</p>

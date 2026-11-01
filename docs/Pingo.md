@@ -122,11 +122,11 @@ flowchart LR
 - [[Run do SFT-120M]] — os três runs, a curva do overfit e por que o v2 (1 época) é o que vale
 - [[Avaliação SFT]] — formato, F1, fidelidade, esquecimento catastrófico
 - [[WebUI]] — a tela de chat (Flask + SSE) para testar o modelo com o prompt do treino
-- [[Modo didático]] — o `/lab`: tokenização colorida, a matriz da frase, a tabela inteira, a lida de volta tied, o relógio do RoPE, os mapas de atenção, a régua do RMSNorm + o gate do SwiGLU, os logits do lm head e a roleta da amostragem (passos ①–⑥ do curso)
+- [[Modo didático]] — o `/lab`: tokenização colorida, a matriz da frase, a tabela inteira, a lida de volta tied, o relógio do RoPE, os mapas de atenção, a régua do RMSNorm + o gate do SwiGLU, os logits do lm head, a roleta da amostragem e o loop com o KV cache em cena (curso completo: passos ①–⑦)
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
-- [[Suíte de testes]] — 184 testes, e o que cada um protege
+- [[Suíte de testes]] — 193 testes, e o que cada um protege
 
 ### 09 — Referência
 - [[Glossário]] — todo jargão que aparece no vault
@@ -171,18 +171,18 @@ flowchart LR
   épocas ia a 6,94×). Números e amostras em [[Run do SFT-120M]].
 - ✅ **WebUI** em Flask para conversar com o modelo (`./scripts/webui.sh` — Ctrl+C desliga;
   porta 8010) — [[WebUI]].
-- ✅ **Modo didático** em `/lab` — passos ① tokenização, ② embedding (a frase como matriz, as
-  normas da tabela inteira, a lida de volta tied), ③ RoPE + atenção (relógio com o Q real,
-  radar por cabeça, matriz n×n com máscara causal), ④ RMSNorm + SwiGLU (a régua √d, o γ e as
-  2.304 portas do gate), ⑤ lm head (a norm final + os 16.387 logits reais, com o posto do
-  sucessor real) e ⑥ amostragem (a **roleta**: fatias de 360° × probabilidade, giro com
-  semente ou token escolhido na mão, e o desdobramento com `generate_stream` até o `<|end|>`)
-  — de uma esteira de sete etapas; ①–② sem GPU, ③–⑥ com **um único forward
-  real** sob o lock — [[Modo didático]].
+- ✅ **Modo didático** em `/lab` — a esteira de sete etapas **fechada** (2026-11-01): ① tokenização,
+  ② embedding (a frase como matriz, as normas da tabela inteira, a lida de volta tied), ③ RoPE +
+  atenção (relógio com o Q real, radar por cabeça, matriz n×n com máscara causal), ④ RMSNorm +
+  SwiGLU (a régua √d, o γ e as 2.304 portas do gate), ⑤ lm head (a norm final + os 16.387 logits
+  reais, com o posto do sucessor real), ⑥ amostragem (a **roleta**: fatias de 360° × probabilidade,
+  giro com semente ou token escolhido na mão, e o desdobramento com `generate_stream` até o
+  `<|end|>`) e ⑦ loop (**o KV cache em cena**: o `generate_stream` do chat tocado passo a passo,
+  a fita de 12 camadas acendendo uma coluna por step, e o preço com/sem cache medido — 20,6 ms
+  vs 38,7 ms, logits idênticos) — ①–② sem GPU, ③–⑥ com **um único forward
+  real** sob o lock, ⑦ com o loop real — [[Modo didático]].
 - ⬜ Próximo: SFT-5 (instruções gerais/mistura de texto cru, para baixar o esquecimento e
-  ensinar recusa), o passo ⑦ do modo didático (loop: o token escolhido volta, KV cache em
-  ação — o ⑥ já gira token a token e o desdobramento já roda `generate_stream`; falta mostrar
-  o cache) e Passo 8 (**350M — suspenso**).
+  ensinar recusa) e Passo 8 (**350M — suspenso**).
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer

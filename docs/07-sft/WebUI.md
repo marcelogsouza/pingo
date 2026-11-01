@@ -107,12 +107,16 @@ RMSNorm + as portas do SwiGLU** (passo ④), **a norm final + os 16.387 logits r
 posição escolhida** (passo ⑤ — o lm head é a própria tabela do ①, tied) e **a roleta da
 amostragem** (passo ⑥ — fatias de 360° × probabilidade, giro com semente ou escolha do token
 na mão, e o desdobramento com `generate_stream` até o `<|end|>`; a conta é a mesma do
-`sample_next` do chat). Os passos ①–②
+`sample_next` do chat) e **o loop com o KV cache em cena** (passo ⑦ — o `generate_stream` do
+chat tocado passo a passo: fita de cache de 12 camadas acendendo coluna a coluna e o preço
+de cada step com e sem cache; a esteira ①–⑦ fechou em 2026-11-01). Os passos ①–②
 não usam GPU nem o lock de geração (lêem `embed.weight` do `.safetensors` na CPU), então dá
-para abrir o laboratório enquanto o chat gera. O ③ roda o único forward real no device do
-servidor sob o `gen_lock` (as rotas avisam se o chat está falando) e corta a frase em 64
+para abrir o laboratório enquanto o chat gera. O ③ roda o único forward de captura no device
+do servidor sob o `gen_lock` (as rotas avisam se o chat está falando) e corta a frase em 64
 tokens; ④, ⑤ e ⑥ pegam carona na mesma captura (o ⑥ sobe o teto para 160 tokens entre frase
-e gerados, e é stateless: a história vai inteira em cada request). Nota completa: [[Modo didático]].
+e gerados, e é stateless: a história vai inteira em cada request). O ⑦ é o único que **gera**
+no lab: `/api/lab/loop` roda `roda_loop` (o mesmo loop do chat, com caderno de notas) sob o
+mesmo lock, tetos de 160 ids e 64 novos. Nota completa: [[Modo didático]].
 
 ## Ver também
 

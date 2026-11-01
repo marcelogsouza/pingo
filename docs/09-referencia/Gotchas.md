@@ -265,11 +265,13 @@ gerar, o chat continua em `montar_prompt()`; o lab é leitura, não geração.
 Primeiro cola na página, depois pinta (`pintarFaixa` depois do `appendChild`). Vale para o
 histograma e para o mapa de atenção do passo ③.
 
-**O modo didático não pode chamar `Server.carregar()` — exceto ③–④, por contrato.**
+**O modo didático não pode chamar `Server.carregar()` — exceto ③–⑦, por contrato.**
 `carregar()` sobe o modelo para a VRAM — exatamente o que a regra do professor proíbe. As rotas
 `/api/lab/*` usam `tokenizador_de()` e `tabela_de()`, que ficam na CPU. A exceção deliberada é
-`/api/lab/attn|rope|bloco` → `Server.captura_atencao()`: carrega o modelo no device do servidor sob
-`gen_lock` (429 se o chat está gerando), teto de 64 tokens e cache de uma captura. Com o
+`/api/lab/attn|rope|bloco` → `Server.captura_atencao()` (e ⑥/⑦: `/api/lab/amostra|desdobrar|loop`):
+carrega o modelo no device do servidor sob
+`gen_lock` (429 se o chat está gerando), teto de 64 tokens na captura (160 no ⑥/⑦) e cache de
+uma captura. Com o
 professor servindo, rode o servidor em `--device cpu` — o forward de 11 tokens leva 0,66 s (na
 GPU livre são 0,64 s já incluindo o load; a captura fica em cache por `modelo+ids`, então
 trocar só camada/cabeça custa microssegundos). Nunca derrube o professor por conta própria.
@@ -307,6 +309,19 @@ cumsum sobre `softmax` — e `test_sample_next_top_p_e_nucleus_de_probabilidade`
 `test_menu_amostra_o_filtro_da_sementeira_como_sample_next` não deixam voltar. Lição
 prática: filter de amostragem sem teste estatístico é enfeite; comparar a sementeira com a
 tela foi o que expôs a diferença.
+
+**O loop do ⑦ É o `generate_stream` — não se refaz por fora.** `roda_loop` espelha o loop do
+chat linha a linha (semente antes do prefill, penalidade sobre `unique(seq)`, `sample_next` na
+mesma ordem) e o teste `test_roda_loop_e_o_generate_stream_token_por_token` confere token a
+token. A ordem importa até no detalhe torto: no `max_tokens` o último token escolhido **é
+forwardedo** (o `for _ in range(max)` do stream faz o forward antes de esgotar — um forward
+"desperdiçado" que o caderno registra honestamente), e no `end_token` o token de parada
+**nunca entra num forward** — por isso o `compara` re-forwarda `seq[:, :cur_len]` (o que o
+cache comeu) e compara com a linha do último forward, não com a última linha da sequência.
+"Otimizar" o caderno pulando o forward final não muda os tokens sorteados (forward não consome
+RNG) mas mente na fita e no preço — os testes de caderno (`cache_depois == cache_antes + 1`,
+`entrou == escolhido do passo anterior`) travam isso. E `PingoCache.snapshots()` é **leitura**:
+quem escrever nos buffers devolvidos corrompe a geração em andamento.
 
 ## Ver também
 

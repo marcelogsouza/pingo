@@ -88,10 +88,14 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | — | `7860377` | **Bug fix: o top-p do `sample_next` acumula probabilidades, não logits** — o cumsum em logits cortava tudo menos o favorito quando havia logit positivo (com `top_p<1`); o padrão `top_p=1` do chat nunca foi afetado, então runs e relatório não mudam. Pego pela roleta do ⑥; travado por teste do nucleus ([[Gotchas]]) |
 | — | `7ef3a04` | **Modo didático passo ⑥ (amostragem — a roleta dos logits)**: `menu_amostra` no `didatic` refaz **a mesma conta do `sample_next` do chat** (penalidade de repetição → temperatura → top-k → top-p → `multinomial`) e devolve o menu com **graus** (360° × p), rank, logit e `p_bruto`; a roda **fecha em 360°** (teste). Rotas `/api/lab/amostra` (menu/girar/forcar, semente reproduz o giro; `forcar` obedece até token fora do filtro, fatia 0°) e `/api/lab/desdobrar` (`generate_stream` até o `<\|end\|>` — prévia do ⑦). **Stateless**: o cliente manda a história; carona na captura do ③–⑤ com chave `modelo+ids`, teto subiu para 160 tokens (`MAX_AMOSTRA_TOKENS`); giro/slider na mesma frase é cache-hit (2–35 ms na CPU). Na tela: sliders de T/top-k/top-p/rep + semente, canvas da roleta com ponteiro, cardápio clicável, chips 🎲/✋ com desfazer e o card do desdobramento — `A` = 285,4°/360° a T=1, desdobramento guloso de 29 tokens em 0,64 s na CPU ([[Modo didático]]) |
 | — | — | Suíte: **184 casos** em 12 arquivos (+6 `test_didatic` do menu/roleta, +8 `test_webui` das rotas ⑥/desdobrar, +1 `test_model` do nucleus) |
+| — | `0478f8d` | **Modo didático passo ⑦ (loop + KV cache — a esteira fechou)**: `roda_loop` no `didatic` roda o **próprio `generate_stream`** do chat com caderno de notas — `entrou`/`escolhido` (o token escolhido **volta** como entrada), `no_forward` (prefill = a frase; decode = 1), `escrito`/`cache_antes`/`cache_depois`/`kv_lidos`/`sem_cache` por step; `PingoCache.snapshots()` entrega ‖K‖/‖V‖ de cada posição em cada camada (a **fita** — colunas antigas congeladas, teste); `economia` (29 tokens-forward com cache **contra 407** sem) e `compara`: o último step refeito sem cache, **38,7 ms vs 20,6 ms** com logits **idênticos** (maxdiff 4,8×10⁻⁶, mesmo argmax). Rota `/api/lab/loop` (tetos 160/64, `gen_lock`) + aba no `/lab`: replay stateless (o servidor roda tudo, o navegador anima — scrubber/⏯), fita 12×n acendendo **uma coluna por step** e barras de preço. Na CPU real: 8+22 tokens até o `<|end|>` em **0,65 s**, decode ~20 ms/step, cache 2,38 MB, replay reproduzível com semente ([[Modo didático]]) |
+| — | — | Suíte: **193 casos** em 12 arquivos (+5 `test_didatic` do loop/caderno/fita, +3 `test_webui` da rota ⑦/página, +1 `test_model` das colunas congeladas do cache) |
 
-Seis dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
-head → amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar
-o modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
+**Sete de sete passos** de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
+head → amostragem → loop): o curso do Pingo está completo — do byte ao token escolhido que
+volta como entrada, com o KV cache medindo-se passo a passo. O objetivo deixou de ser só
+"ter um modelo": passou a ser **mostrar o modelo por dentro**, que é o que o projeto sempre
+prometeu ser ([[Visão e filosofia]]).
 
 ## Como o dia 2 terminou
 
@@ -115,7 +119,7 @@ flowchart LR
         sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
     subgraph "2026-11-01"
-        lab["modo didático<br/>(/lab · passos ①–⑥)"]
+        lab["modo didático<br/>(/lab · passos ①–⑦ — esteira fechada)"]
     end
     p6a --> p6b --> p7
     wui --> lab

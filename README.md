@@ -142,8 +142,8 @@ formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 ### Modo didático — `/lab`
 
 A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. Os
-passos ①, ②, ③, ④ e ⑤ estão prontos — **tokenização**, **embedding**, **RoPE + atenção**,
-**RMSNorm + SwiGLU** e **lm head**:
+sete passos estão prontos — **tokenização**, **embedding**, **RoPE + atenção**,
+**RMSNorm + SwiGLU**, **lm head**, **amostragem (a roleta)** e **loop + KV cache**:
 
 - o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
   número, byte puro), cada um com o **id** da tabela embaixo;
@@ -176,16 +176,24 @@ passos ①, ②, ③, ④ e ⑤ estão prontos — **tokenização**, **embeddin
   repetição à vista. Girar é reproduzível com semente — e dá para **escolher o token na mão**,
   clicando no cardápio (até um token cortado pelo filtro entra, fatia 0°). O card
   **desdobramento** mostra o que veio daquilo: a história continua com o `generate_stream` do
-  chat, token a token, até o `<|end|>`. O passo ⑦ (o loop e o KV cache em cena) é o único que
-  falta. Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
+  chat, token a token, até o `<|end|>`;
+- no passo ⑦ o curso fecha o círculo: o token escolhido **volta** como entrada do step
+  seguinte e o **KV cache** sobe ao palco — a **fita do cache** (12 camadas) acende **uma
+  coluna por step** e nunca reescreve as antigas, e o medidor de preço mostra **29 tokens-forward
+  com cache contra 407 sem**, com a prova cronometrada: o mesmo step refeito sem cache leva
+  38,7 ms contra 20,6 ms com os **logits idênticos** (maxdiff 4,8×10⁻⁶). O replay é o
+  `generate_stream` do chat — mesma semente, mesmo replay. A esteira ①–⑦ está completa.
+  Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
 Os passos ③–⑥ carregam o modelo no device do servidor — **um único forward serve ③, ④, ⑤ e o
 primeiro menu do ⑥** (trocar camada custa ~12 ms e mudar de posição no ⑤, ~16 ms, pela captura
-em cache; girar a roleta ou mexer nos sliders na mesma frase é cache-hit, 2–35 ms); respeitam
+em cache; girar a roleta ou mexer nos sliders na mesma frase é cache-hit, 2–35 ms); o ⑦ é o
+único que **gera** no lab — roda o `generate_stream` do chat com caderno de notas (replay
+stateless: o request inteiro de 8+22 tokens leva 0,65 s na CPU). Todas respeitam
 o lock do chat (devolvem aviso se ele está falando) e limitam a frase (64 tokens nos ③–⑤, 160
-no ⑥); com a VRAM ocupada, `--device cpu` serve igual (0,66 s o forward de uma frase curta; na
-GPU livre são 0,64 s já com o load do modelo).
+no ⑥–⑦, mais 64 novos no ⑦); com a VRAM ocupada, `--device cpu` serve igual (0,66 s o forward
+de uma frase curta; na GPU livre são 0,64 s já com o load do modelo).
 
 ## Aviso
 
