@@ -4,13 +4,13 @@ etapa: 0
 atualizado: 2026-11-01
 ---
 
-# Modo didático (`/lab`) — passos ①–③: tokenização, embeddings, RoPE + atenção
+# Modo didático (`/lab`) — passos ①–④: tokenização, embeddings, RoPE + atenção, bloco
 
 O Pingo é um **projeto-curso** ([[Visão e filosofia]]): o valor está tanto no modelo quanto em
 conseguir *mostrar* o que acontece dentro dele. O modo didático é a tela que faz isso — um
 "laboratório" na mesma WebUI, com uma esteira de etapas no topo (tokenização → embeddings →
-atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①, ② e ③
-estão prontos, ④–⑦ aparecem marcados "em breve".
+atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–④
+estão prontos, ⑤–⑦ aparecem marcados "em breve".
 
 ```
 http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
@@ -50,7 +50,17 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 | **radar do token** | 14 linhas (cabeças) × n colunas (tokens): quanto o token escolhido olhou para cada um dos anteriores; o futuro vem escuro (máscara causal). Clique numa linha abre a cabeça em sparkline com rótulos — o formato escolhido com o autor (calor + detalhe ao clicar) |
 | **matriz n×n** | todos olhando todos, numa camada e cabeça: o triângulo superior vazio de propósito, a linha do token escolhido contornada — é o radar deitado |
 
-## As oito decisões que importam
+## O que a tela faz (passo ④)
+
+| elemento | por quê |
+|---|---|
+| **a régua do RMSNorm** (uma linha por token, 4 barras) | ‖x‖ entra torto, o **RMSNorm puro** devolve √896 = 29,93 para *todos* os tokens (a coluna verde sai com barras iguais — é a definição de normalizar, medida do forward, não figura), o **γ** modula dimensão a dimensão, e a última barra é o Δ que a camada somou (atenção + MLP) |
+| **γ desenhado como faixa**, alternável norma-da-atenção / norma-do-MLP | o γ é o modelo opinando sobre quais dimensões valem; com média/min/max/σ ao lado, o aluno vê que a opinião da camada 1 é quase unânime (0,86–0,93) — e procura as camadas onde ela não é |
+| **as três faixas do SwiGLU** — gate, up e o produto, na *mesma escala*, uma sobre a outra | `down(silu(gate)·up)` vira uma imagem só: o produto tem picos onde gate e up concordam e vales quase zero onde o gate fechou — a esparsidade aparece entre as três |
+| **contas do token** | "portas abertas: 151 de 2.304" (força ≥ 10% da mais forte) e "‖Δ‖ num resíduo de ‖x‖" — a lição de que o modelo guarda fato como um punhado de neurônios, e de que cada camada soma pouco (por isso são 12) |
+| controles camada(12) × token, **sem novo forward** | a captura do ③ (chave `modelo+ids`) serve os dois: trocar camada no ④ custa 12 ms na CPU |
+
+## As nove decisões que importam
 
 **1. Superfície ≠ texto.** Num BPE byte-level o token é uma sequência de *bytes*: o vocab
 guarda `ĠatÃ©`, o humano lê ` até`. As duas aparecem na tela, lado a lado, porque é ali que o
@@ -106,7 +116,8 @@ verdade saem depois das 12 camadas; a nota diz isso no rodapé da seção.
 **7. O ③ captura sem contaminar: `capture=[{} por bloco]`.** `PingoLM.forward(..., capture=)`
 é uma carona opcional: cada dict sai com `q_lin/q/k_lin/k` (pré/pós-RoPE, `[B,H,T,D]`) e `w` —
 as probabilidades de atenção **refeitas à mão**, porque `F.scaled_dot_product_attention` é
-fused e nunca devolve pesos. Sem `capture` o forward não muda uma linha: o teste exige
+fused e nunca devolve pesos (e desde o ④, também com as chaves do bloco inteiro — decisão 9).
+Sem `capture` o forward não muda uma linha: o teste exige
 logits **bit a bit** iguais com a captura pedida, e o `y` continua vindo do SDPA. A captura é
 só do prefill (B=1, sem padding nem cache — `ValueError` fora disso). No servidor,
 `Server.captura_atencao()` é a **única rota do lab que carrega o modelo**: roda sob
@@ -121,6 +132,17 @@ forward (0,66 s para 11 tokens na CPU). Com o professor servindo, o servidor em
 matemática. O front-end pega `head_dim/2` da própria captura e o teste confere o `q` capturado
 contra `apply_rope(q_lin)` — se divergir, a aula está mentindo. O ponto verde do relógio é a
 versão visual desse teste.
+
+**9. O ④ não pediu um forward novo — a carona foi estendida, não bifurcada.** O mesmo
+`capture=[{} por bloco]` do ③ ganhou as chaves do bloco: `x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`
+(fluxo residual, as duas normas — `n*p` = **antes do γ** — e o SwiGLU). A conta não foi
+duplicada: `RMSNorm`, `SwiGLU` e o bloco recebem o dict e o preenchem **na passagem real**,
+sem recalcular nada — e o teste continua exigindo logits *bit a bit* iguais com a captura
+pedida, mais `x2` do bloco *k* == `x0` do bloco *k+1* (bit a bit) e `‖n1p‖ = √d` para todos
+os tokens. Capturar o RMSNorm **antes do γ** é o ponto: a lição é "todo vetor passa a medir
+√d", e reconstruir esse vetor dividindo `n1` por γ seria desonesto com vetores minúsculos
+(ε vira piso). Consequência de projeto: a captura cacheada por `modelo+ids` serve o ③ e o ④
+com um único forward — a segunda camada do ④ responde em 12 ms na CPU.
 
 ## O contrato (o que o front-end recebe)
 
@@ -146,11 +168,18 @@ POST /api/lab/attn {modelo, ids[], camada}    // ③: pesos reais de uma camada 
    → {modelo, camada, n_camadas, heads, n, pesos[heads][n][n]}
 GET  /api/lab/rope?modelo=sft&ids=4,9,…&camada=11&head=0&i=5   // ③: os vetores do relógio
    → {pos, head_dim, theta, inv_freq[32], q_lin[64], q[64], k_lin[64], k[64]}
+POST /api/lab/bloco {modelo, ids[], camada, i}   // ④: a MESMA captura do ③ (gen_lock!)
+   → {n, d, hidden, bins, raiz_d, i, camada, n_camadas,
+      tokens:[{i, id, token, texto, x0, n1p, n1, a, x1, n2p, n2, m, x2}],  // ‖·‖ de cada passo
+      gamma:{attn:{media,min,max,std,faixa[bins]}, mlp:{…}},
+      mlp:{g[bins], u[bins], s[bins], escala, maior{j,valor}, abertas, forca_max,
+           delta, residuo}}
 ```
 
 Tetos: 4.000 caracteres no pedido, 512 chips desenhados (`cortado_em` avisa), 96 linhas de
-matriz (`MATRIZ_LINHAS`) e 64 tokens na captura de atenção (`MAX_ATTN_TOKENS`). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU); a página é `web/lab.html`; as rotas em
-`scripts/webui.py` são finas.
+matriz (`MATRIZ_LINHAS`) e 64 tokens na captura do forward (`MAX_ATTN_TOKENS`; ③ e ④ dividem
+o teto e a captura). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU); a página
+é `web/lab.html`; as rotas em `scripts/webui.py` são finas.
 
 ## O que os números reais do Pingo mostram nesta tela
 
@@ -206,14 +235,34 @@ cache por `modelo+ids` — os valores batem dígito a dígito entre CPU e GPU, t
   ele dá **0,477 a si mesmo** e 0,189 ao `Ġvai` — a última camada concentra, a primeira
   dispersa. Slide pronto para a aula de [[Atenção causal]].
 
+No passo ④ (medidos no mesmo checkpoint e na mesma frase de 11 tokens; 1ª chamada 0,17 s —
+o modelo e o `safetensors` já quentes — e **12 ms** para a 2ª camada, pois a captura do ③
+serve os dois):
+
+- **a régua é literal**: na camada 1 os tokens de conteúdo entram com ‖x‖ de 0,94 a 1,29 e os
+  de chat com **0,235/0,236** (a norma baixinha do passo ②); depois do RMSNorm puro todos
+  medem **29,92** — menos os dois de chat, que dão **29,69**: num vetor tão pequeno a média
+  quadrática (6×10⁻⁵) é só ~60× o `eps` (10⁻⁶), e o piso de 1,6% aparece na tela. É o ε dos
+  [[RMSNorm]] trabalhando à vista.
+- **o γ da camada 1 quase não opina**: norma-do-MLP média 0,891 (min 0,858, max 0,932, σ só
+  **0,011**) e norma-da-atenção 0,864 (0,754–0,934) — a faixa sai praticamente chata, e é uma
+  pergunta pronta para o aluno: *em qual camada o γ deixa de ser chato?*
+- **cada camada soma pouco — por isso são 12**: na camada 1 o Δ da atenção é 0,46–1,16 e o do
+  MLP 3,1–5,3 sobre um resíduo de ~1; na camada 12 o resíduo já cresce **100×** (‖x‖ de 19 a
+  107!) e o MLP soma 30,2 num resíduo de 34,4 — a última camada não é delicada. Bônus
+  honesto: quem chega com o **maior** resíduo na última camada é o `<|user|>` (107).
+- **o gate abre pouco**: para `Ġinvestir` na camada 1, **151 de 2.304** portas têm força
+  ≥ 10% da mais forte (#1027, valor 2,23); na camada 12, 185 abertas e a mais forte vale
+  14,07. O `<|user|>` abre **490** — o token mal treinado é também o mais difuso.
+
 ## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
 
-`④ RMSNorm + SwiGLU` · `⑤ lm head — a mesma tabela` (a prévia já roda no ②) · `⑥ amostragem`
-· `⑦ loop`. O andaime do ③ já resolveu a parte difícil: o `capture` entrega os
-intermediários que ④–⑥ precisam (é só estender a carona para `norm_attn(x)`, o SwiGLU e o
-logit final), e as rotas do ③ já deixaram de ser intocáveis — carregam o modelo sob
-`gen_lock` com teto de tokens. O GPU pesado continua proibido com o professor servindo
-([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com aviso antes.
+`⑤ lm head — a mesma tabela` (a prévia já roda no ②; para o logit real falta capturar a
+`norm` final + o `lm_head` — o `x2` da última camada a captura do ④ já entrega) ·
+`⑥ amostragem` · `⑦ loop`. O andaime do ③–④ já resolveu a parte difícil: o `capture`
+entrega os intermediários que ⑤–⑥ precisam, e as rotas que carregam o modelo já sabem
+obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com o professor
+servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com aviso antes.
 
 ## Ver também
 

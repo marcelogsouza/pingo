@@ -111,7 +111,7 @@ pingo/
 9. **Mid-training / SFT** — dataset de instruções pt (ex.: datasets pt-BR de instruções no HF). ✔ *feito em 2026-10-30/31: SFT-1..4 + 30k pares; o run que vale é `runs/sft-120m-ep1`.*
 10. **RLHF** — começar com **DPO** (dados de preferência pt-BR já existem, ex.: `Hub-Ai/ptbr-human-preferences`); PPO + reward model como opção avançada.
 11. **Avaliação formal** — benchmarks pt (ex.: tarefas estilo NeurIPS-BR-LP, hellaswag-pt).
-12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔, ② ✔ e ③ ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
+12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔, ② ✔, ③ ✔ e ④ ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
     - **② embedding** — ✔ 2026-11-01: o id → vetor (matriz), as normas de todos os vetores, e a prévia do `lm_head` tied (produto escalar ordena diferente do cosseno porque a nota inclui a norma).
     - **③ RoPE + atenção** — ✔ 2026-11-01 (requisito do Marcelo cumprido): `capture` no
       forward devolve `q_lin/q/k_lin/k` e os pesos `w` por camada (sem captura, forward bit a bit
@@ -120,11 +120,16 @@ pingo/
       **radar do token** (1 cabeça por linha × n tokens, clique abre a sparkline da cabeça) e a
       **matriz n×n com a máscara causal visível**, linha do token contornada. Forward real no
       device do servidor sob `gen_lock`, teto de 64 tokens (0,66 s/11 tokens na CPU).
-    - **④ RMSNorm + SwiGLU** — o resto do bloco; comparação antes/depois da normalização.
+    - **④ RMSNorm + SwiGLU** — ✔ 2026-11-01: o resto do bloco, na **carona do forward do ③**
+      (o `capture` ganhou `x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2` + os γ das normas; sem captura o
+      forward é bit a bit idêntico — teste). `/api/lab/bloco` + três cards: **régua do RMSNorm**
+      (‖x‖ → RMS puro = √d para todos → com γ → Δ da camada), **γ desenhado** (faixa alternável
+      attn/MLP com média/min/max/σ) e **SwiGLU** (gate, up e o produto na mesma escala + portas
+      abertas e Δ vs resíduo). Trocar camada = 12 ms (captura em cache).
     - **⑤ lm head** — os 16.387 logits, a mesma tabela do passo 1.
     - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.
     - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação.
-    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ O ③ entregue cumpre o critério (`capture` + `gen_lock` + teto de 64; com o professor servindo, `--device cpu`).
+    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③ e ④ entregues cumprem o critério (`capture` + `gen_lock` + teto de 64, **um forward só** para os dois; com o professor servindo, `--device cpu`).
 
 ## Decisões fechadas ✔
 
