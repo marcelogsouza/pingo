@@ -24,6 +24,7 @@ sys.modules["pingo_webui"] = w
 _spec.loader.exec_module(w)
 
 from pingo.config import PingoConfig  # noqa: E402
+from pingo.didatic import CATEGORIAS  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, USER_TOKEN  # noqa: E402
 
@@ -224,3 +225,92 @@ def test_prompt_maior_que_o_contexto_devolve_400(tmp_path):
     assert r.status_code == 400
     assert "contexto" in r.get_json()["erro"]
     assert not servidor.gen_lock.locked()
+
+
+# ------------------------------------------------------------------ laboratório (modo didático)
+
+
+def test_lab_tokeniza_o_prompt_do_treino(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "modelo": "sft"})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["prompt"] == f"{USER_TOKEN}Pergunta: oi mundo{ASSISTANT_TOKEN}"
+    assert d["cru"] is False and d["modelo"] == "sft"
+    ids = servidor.tokenizador_de("sft").encode(d["prompt"], add_special_tokens=False).ids
+    assert [t["id"] for t in d["tokens"]] == ids      # a tela mostra exatamente o encode()
+    assert d["resumo"]["n_tokens"] == len(ids) and d["resumo"]["vocab"] == len(VOCAB)
+    assert {t["kind"] for t in d["tokens"]} <= set(CATEGORIAS)
+    offsets = [t["offset"] for t in d["tokens"]]
+    assert offsets == sorted(offsets) and all(0 <= a <= b <= len(d["prompt"]) for a, b in offsets)
+    assert all(t["id"] == d["tokens"][t["repetido"]]["id"] for t in d["tokens"]
+               if t["repetido"] is not None)
+
+
+def test_lab_no_texto_cru_nao_ha_tokens_de_chat(ambiente):
+    cliente, _ = ambiente
+    d = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "cru": True}).get_json()
+    assert d["prompt"] == "oi mundo" and d["cru"] is True
+    assert d["resumo"]["especiais"] == 0
+
+
+def test_lab_rejeita_entradas_ruins(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/tokenize", json={"texto": "   "}).status_code == 400
+    assert cliente.post("/api/lab/tokenize", json={"texto": "x" * 5001}).status_code == 400
+    assert cliente.post("/api/lab/tokenize", json={"texto": "oi",
+                                                   "modelo": "gpt-4"}).status_code == 400
+    assert not servidor.gen_lock.locked()      # o lab não usa o lock de geração
+
+
+def test_lab_embedding_ve_do_safetensors_sem_carregar_o_modelo(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.get("/api/lab/embedding?modelo=sft&id=9")
+    assert r.status_code == 200
+    f = r.get_json()
+    assert f["id"] == 9 and f["token"] == "oi" and f["texto"] == "oi"
+    assert f["dim"] == 16 and len(f["valores"]) == 16
+    assert len(f["vizinhos"]) == 8 and 9 not in [v["id"] for v in f["vizinhos"]]
+    assert servidor._loaded is None                       # nada foi para a GPU/CPU de modelo
+    assert not servidor.gen_lock.locked()
+    assert servidor.tabela_de("sft") is servidor.tabela_de("sft")   # cacheada por modelo
+
+
+def test_lab_embedding_valida_o_id(ambiente):
+    cliente, _ = ambiente
+    assert cliente.get("/api/lab/embedding?modelo=sft&id=999").status_code == 400
+    assert "fora do vocab" in cliente.get(
+        "/api/lab/embedding?modelo=sft&id=999").get_json()["erro"]
+    assert cliente.get("/api/lab/embedding?modelo=sft").status_code == 400
+    assert cliente.get("/api/lab/embedding?modelo=ninguem&id=1").status_code == 400
+
+
+def test_lab_lookup_por_id_e_por_palavra(ambiente):
+    cliente, _ = ambiente
+    por_id = cliente.get("/api/lab/lookup?modelo=sft&q=9").get_json()["achados"]
+    assert [a["id"] for a in por_id][:1] == [9] and por_id[0]["token"] == "oi"
+    por_texto = cliente.get("/api/lab/lookup?modelo=sft&q=mu").get_json()["achados"]
+    assert any(a["token"] == "mundo" for a in por_texto)
+    assert cliente.get("/api/lab/lookup?modelo=sft&q=").status_code == 400
+
+
+def test_lab_exige_tokenizer_do_mesmo_vocab_que_a_tabela(tmp_path):
+    """16.384 × 16.387 é o tipo de erro que faria a ficha mostrar o vetor do token errado."""
+    d = _checkpoint(tmp_path)                      # modelo com vocab = len(VOCAB)
+    menor = {t: i for i, t in enumerate(list(VOCAB)[:len(VOCAB) - 3])}
+    Tokenizer(models.WordLevel(vocab=menor, unk_token="<unk>")).save(str(d / "tokenizer.json"))
+    servidor = w.Server([w.ModelSpec("sft", "SFT", d, True)], device="cpu")
+    app = w.create_app(servidor)
+    app.config.update(TESTING=True)
+    r = app.test_client().get("/api/lab/embedding?modelo=sft&id=1")
+    assert r.status_code == 400 and "tokenizer" in r.get_json()["erro"]
+
+
+def test_lab_pagina_e_o_link_do_chat(ambiente):
+    cliente, _ = ambiente
+    corpo = cliente.get("/lab").get_data(as_text=True)
+    assert cliente.get("/lab").status_code == 200
+    assert "tokenização" in corpo and "/api/lab/tokenize" in corpo and "em breve" in corpo
+    pagina_do_chat = cliente.get("/").get_data(as_text=True)
+    assert 'href="/lab"' in pagina_do_chat
+

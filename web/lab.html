@@ -1,0 +1,605 @@
+<!doctype html>
+<!-- Modo didático do Pingo — passo 1: do texto ao id e ao vetor inicial de cada id.
+     Servida em /lab pela WebUI (scripts/webui.py); a lógica vem de pingo/didatic.py. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pingo — laboratório · 1. tokenização</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔬</text></svg>">
+<style>
+  :root{
+    --bg:#0a0c10; --panel:#12161d; --panel2:#161b24; --line:#1f2632; --line2:#2a3342;
+    --text:#e7ebf2; --muted:#8d98aa; --dim:#5f6b7d;
+    --accent:#3b7bfb; --accent2:#5b93ff; --accent-dim:#1b2b4d;
+    --green:#3ddc84; --yellow:#ffd166; --red:#ff6b6b; --violet:#a78bfa;
+    --rose:#f472b6; --amber:#f2a65a;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  body::before{content:"";position:fixed;inset:-20% 0 auto 0;height:560px;pointer-events:none;
+    background:radial-gradient(60% 100% at 50% 0%,rgba(59,123,251,.16),transparent 70%)}
+  .wrap{position:relative;max-width:1000px;margin:0 auto;padding:0 20px 120px}
+  header{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:12px;padding:14px 0;
+    background:linear-gradient(var(--bg) 65%,transparent);backdrop-filter:blur(6px)}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0}
+  .brand svg{width:30px;height:30px;flex:none;filter:drop-shadow(0 2px 8px rgba(59,123,251,.45))}
+  .brand b{font-size:17px}
+  .brand i{color:var(--dim);font-size:12.5px;font-style:normal;white-space:nowrap}
+  .spacer{flex:1}
+  .link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--muted);
+    font-size:12.5px;border:1px solid var(--line);background:var(--panel);padding:8px 12px;
+    border-radius:10px;transition:.15s;white-space:nowrap}
+  .link:hover{color:var(--text);border-color:var(--line2);transform:translateY(-1px)}
+  .models{display:flex;gap:4px;padding:4px;background:var(--panel);border:1px solid var(--line);
+    border-radius:11px}
+  .models button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;
+    padding:6px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:.15s}
+  .models button:hover{color:var(--text)}
+  .models button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
+  /* passos do curso */
+  .steps{display:flex;gap:6px;overflow-x:auto;padding:6px 0 14px;scrollbar-width:thin}
+  .step{display:flex;align-items:center;gap:8px;flex:none;padding:8px 13px;border-radius:999px;
+    border:1px solid var(--line);background:var(--panel);font-size:12.5px;color:var(--dim)}
+  .step b{width:19px;height:19px;flex:none;border-radius:50%;display:grid;place-items:center;
+    background:var(--panel2);color:var(--muted);font:11px var(--mono)}
+  .step.on{color:var(--text);border-color:#2b4d8f;background:linear-gradient(180deg,#18294b,#141d31);
+    box-shadow:0 6px 20px rgba(59,123,251,.13)}
+  .step.on b{background:var(--accent);color:#fff}
+  .step.off{opacity:.55}
+  .step.off::after{content:"em breve";font-size:10.5px;color:var(--dim);
+    border:1px solid var(--line);border-radius:6px;padding:1px 5px}
+  /* cartões */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px;
+    margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:15px;font-weight:600}
+  .card p.hint{margin:0 0 12px;color:var(--muted);font-size:13px}
+  textarea#q{width:100%;border:1px solid var(--line2);background:var(--bg2);color:var(--text);
+    border-radius:11px;padding:11px 13px;font:14.5px/1.55 inherit;outline:none;resize:vertical;
+    min-height:70px}
+  textarea#q:focus{border-color:#33507f;box-shadow:0 0 0 3px rgba(59,123,251,.12)}
+  .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:11px}
+  .seg{display:flex;gap:3px;padding:3px;background:var(--bg2);border:1px solid var(--line);
+    border-radius:10px}
+  .seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;
+    padding:6px 11px;border-radius:7px;cursor:pointer}
+  .seg button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
+  .chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:7px 12px;
+    border-radius:999px;font-size:12.5px;cursor:pointer;transition:.15s}
+  .chip:hover{color:var(--text);border-color:var(--line2);transform:translateY(-1px)}
+  .medidor{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:14px;
+    font:12.5px var(--mono);color:var(--muted)}
+  .medidor b{color:var(--text);font-size:15px}
+  .medidor em{font-style:normal;color:var(--accent2)}
+  .avisos{display:flex;flex-direction:column;gap:7px;margin-top:12px}
+  .aviso{display:flex;gap:9px;align-items:flex-start;background:var(--bg2);
+    border:1px solid var(--line);border-left:2px solid var(--accent2);border-radius:9px;
+    padding:9px 12px;font-size:13px;color:var(--muted)}
+  .aviso b{color:var(--text)}
+  /* os tokens */
+  .legenda{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+  .lg{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
+    background:var(--bg2);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--muted);
+    cursor:pointer;transition:.15s}
+  .lg:hover{color:var(--text);border-color:var(--line2)}
+  .lg i{width:9px;height:9px;border-radius:3px;background:var(--c)}
+  .lg.sel{border-color:var(--c);color:var(--text);background:color-mix(in srgb,var(--c) 14%,var(--bg2))}
+  .lg s{text-decoration:none;font:11px var(--mono);color:var(--dim)}
+  #tokens{display:flex;flex-wrap:wrap;gap:7px;align-items:flex-end;min-height:58px}
+  .tk{--c:var(--accent2);position:relative;display:inline-flex;flex-direction:column;
+    align-items:center;gap:1px;border:1px solid color-mix(in srgb,var(--c) 45%,transparent);
+    background:color-mix(in srgb,var(--c) 13%,var(--panel2));color:var(--text);cursor:pointer;
+    border-radius:9px;padding:6px 9px 4px;font:inherit;transition:transform .12s,box-shadow .12s;
+    animation:pop .3s cubic-bezier(.2,.8,.3,1) both;animation-delay:calc(var(--d) * 20ms)}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}
+  .tk:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(0,0,0,.35);
+    background:color-mix(in srgb,var(--c) 22%,var(--panel2))}
+  .tk .tx{white-space:pre;font-size:14.5px;line-height:1.35}
+  .tk .idd{font:10.5px var(--mono);color:color-mix(in srgb,var(--c) 75%,var(--text))}
+  .tk.sel{outline:2px solid var(--c);outline-offset:2px}
+  .tk.off{opacity:.16;filter:saturate(.4)}
+  .tk.rep::after{content:"↻";position:absolute;top:-7px;right:-6px;font-size:11px;
+    background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:0 4px;
+    color:var(--amber)}
+  .tk.acb::before{content:"";position:absolute;top:4px;left:4px;width:5px;height:5px;
+    border-radius:50%;background:var(--red);box-shadow:0 0 6px var(--red)}
+  .hint2{color:var(--dim);font-size:12.5px;margin-top:12px}
+  /* ficha do token */
+  #ficha{position:fixed;left:0;right:0;bottom:0;z-index:40;display:none;justify-content:center;
+    padding:14px 16px 18px;background:linear-gradient(transparent,var(--bg) 22%)}
+  #ficha.open{display:flex}
+  .sheet{width:100%;max-width:1000px;background:var(--panel);border:1px solid var(--line2);
+    border-radius:18px;box-shadow:0 -14px 50px rgba(0,0,0,.5);padding:15px 18px;
+    animation:sobe .28s cubic-bezier(.2,.8,.3,1) both}
+  @keyframes sobe{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+  .sheet header{position:static;padding:0;background:none;backdrop-filter:none;gap:10px}
+  .sheet .big{font:15.5px var(--mono);color:var(--text);white-space:pre}
+  .sheet .big i{font-style:normal;color:var(--dim)}
+  .fechar{margin-left:auto;background:var(--panel2);border:1px solid var(--line2);color:var(--muted);
+    border-radius:9px;padding:6px 11px;font:inherit;font-size:12.5px;cursor:pointer}
+  .fechar:hover{color:var(--text)}
+  .grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;
+    margin:12px 0}
+  .kv{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 11px}
+  .kv label{display:block;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;
+    color:var(--dim)}
+  .kv b{font:13.5px var(--mono);color:var(--text);word-break:break-all}
+  .kv b.mono{white-space:pre-wrap}
+  #heat{width:100%;height:84px;display:block;border:1px solid var(--line);border-radius:10px;
+    background:var(--bg2)}
+  .escala{display:flex;justify-content:space-between;font:11px var(--mono);color:var(--dim);
+    margin-top:5px}
+  .vizinhos{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+  .vz{display:grid;grid-template-columns:minmax(90px,1fr) 2fr auto;gap:10px;align-items:center;
+    font-size:13px}
+  .vz .t{font:13px var(--mono);white-space:pre;color:var(--text);overflow:hidden;
+    text-overflow:ellipsis}
+  .vz .t i{font-style:normal;color:var(--dim);font-size:11px}
+  .vz .bar{height:8px;border-radius:6px;background:var(--panel2);overflow:hidden}
+  .vz .bar i{display:block;height:100%;border-radius:6px;
+    background:linear-gradient(90deg,#2f6ad0,var(--green));transition:width .5s ease}
+  .vz .c{font:12px var(--mono);color:var(--muted)}
+  .tit{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);
+    margin:14px 0 8px}
+  /* busca */
+  .busca{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+  .busca input{flex:1;min-width:220px;border:1px solid var(--line2);background:var(--bg2);
+    color:var(--text);border-radius:10px;padding:9px 12px;font:13.5px var(--mono);outline:none}
+  .busca input:focus{border-color:#33507f}
+  .res{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+  .res button{--c:var(--accent2);border:1px solid var(--line);background:var(--bg2);color:var(--text);
+    border-radius:8px;padding:5px 9px;font:12.5px var(--mono);cursor:pointer;white-space:pre}
+  .res button:hover{border-color:var(--c)}
+  .res button s{text-decoration:none;color:var(--dim);font-size:10.5px;margin-left:6px}
+  .erro{background:#2a1518;border:1px solid #5a2a2f;color:#ffb4b4;border-radius:10px;
+    padding:10px 13px;font-size:13.5px;margin-bottom:14px;display:none}
+  .erro.on{display:block}
+  .rodape{color:var(--dim);font-size:12px;text-align:center;padding:10px 0 0}
+  .rodape code{font:11.5px var(--mono);color:var(--muted)}
+  @media (max-width:680px){.wrap{padding:0 12px 130px} .brand i{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#5b93ff"/><stop offset="1" stop-color="#1f4bb8"/>
+        </linearGradient></defs>
+        <path d="M16 3C11 10 6 14.2 6 20a10 10 0 0 0 20 0c0-5.8-5-10-10-17z" fill="url(#g)"/>
+        <ellipse cx="12.6" cy="20.4" rx="2" ry="2.6" fill="#0a0c10" opacity=".82"/>
+        <ellipse cx="19.4" cy="20.4" rx="2" ry="2.6" fill="#0a0c10" opacity=".82"/>
+        <circle cx="13.3" cy="19.5" r=".7" fill="#fff"/><circle cx="20.1" cy="19.5" r=".7" fill="#fff"/>
+      </svg>
+      <div><b>Pingo</b> <i>· laboratório do curso</i></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="models" id="models"></div>
+    <a class="link" href="/">💬 chat</a>
+  </header>
+
+  <nav class="steps" id="steps" aria-label="etapas do modelo"></nav>
+
+  <div class="erro" id="erro"></div>
+
+  <section class="card">
+    <h2>1 · Tokenização — o que o modelo realmente recebe</h2>
+    <p class="hint">Escreva abaixo. Cada pílula colorida é <b>um token</b>: o que o modelo vê
+      não são letras, são números da tabela de 16 mil pedaços.</p>
+    <textarea id="q" spellcheck="false">Quanto a Companhia vai investir até 2028?</textarea>
+    <div class="row">
+      <div class="seg" id="modo">
+        <button data-cru="0" class="on">o prompt do chat</button>
+        <button data-cru="1">só o meu texto</button>
+      </div>
+      <div class="spacer" style="flex:1"></div>
+      <span id="exemplos" style="display:flex;gap:7px;flex-wrap:wrap"></span>
+    </div>
+    <div class="medidor" id="medidor"></div>
+    <div class="avisos" id="avisos"></div>
+  </section>
+
+  <section class="card">
+    <h2>Os tokens, na ordem</h2>
+    <p class="hint">Clique (ou navegue com <kbd>Tab</kbd> + <kbd>Enter</kbd>) para abrir a ficha:
+      o id, os bytes e o vetor inicial desse token.</p>
+    <div class="legenda" id="legenda"></div>
+    <div id="tokens"></div>
+    <div class="hint2" id="hint2"></div>
+  </section>
+
+  <section class="card">
+    <h2>Buscar no vocabulário</h2>
+    <p class="hint">Digite um id (<code>4560</code>), uma palavra (<code>São</code>) ou a
+      superfície byte-level (<code>Ã§Ã£o</code>) e veja o que existe na tabela.</p>
+    <div class="busca">
+      <input id="bq" placeholder="ex.: 4560 · ção · ĠpreÃ§o" spellcheck="false">
+      <button class="chip" id="bgo">buscar</button>
+    </div>
+    <div class="res" id="res"></div>
+  </section>
+
+  <p class="rodape">tokenização por <code>pingo/didatic.py</code> · BPE byte-level de
+    <span id="vocab">16.000</span> pedaços · nada disto usa a GPU</p>
+</div>
+
+<div id="ficha">
+  <div class="sheet">
+    <header>
+      <span class="big" id="ftitulo"></span>
+      <button class="fechar" id="ffecha">fechar ✕</button>
+    </header>
+    <div class="grade" id="fgrade"></div>
+    <div class="tit">Os <span id="fdim">896</span> números do vetor inicial
+      — <span id="fdimmaior"></span></div>
+    <canvas id="heat" width="896" height="84"></canvas>
+    <div class="escala"><span id="fesq">−</span><span>0 · <span id="flectura"></span></span>
+      <span id="fesd">+</span></div>
+    <div class="tit">Vizinhos na tabela (cosseno) — a semântia já está aqui, antes da 1ª camada</div>
+    <div class="vizinhos" id="fviz"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const CAT = {
+  'especial':    '#a78bfa',   /* <|user|>, <|end|> — o que o SFT ensinou */
+  'linha':       '#8d98aa',   /* quebra de linha (byte 0x0a) */
+  'bytes':       '#ff6b6b',   /* byte puro: o vocab não tinha o caractere e o BPE soletrou */
+  'pontuação':   '#f472b6',
+  'número':      '#ffd166',
+  'início':      '#5b93ff',    /* começa com espaço: começa palavra */
+  'continuação': '#f2a65a',
+};
+const PASSOS = [
+  ['tokenização', true], ['embedding (896)', false], ['RoPE + atenção', false],
+  ['RMSNorm + SwiGLU', false], ['lm head — a mesma tabela!', false],
+  ['amostragem', false], ['loop: o token volta', false],
+];
+const EXEMPLOS = [
+  "Quanto a Companhia vai investir até 2028?",
+  "Olá, São João — não é o são João.",
+  "O preço foi R$ 1.234,56 (≈ 3% do PIB).",
+];
+const state = {modelos: [], modelo: null, cru: false, filtro: null,
+               tokens: [], resumo: null, prompt: '', sel: null};
+
+const fmt = n => n.toLocaleString('pt-BR');
+const visivel = t => t.replace(/ /g, '␣').replace(/\n/g, '⏎').replace(/\t/g, '⇥');
+function erro(msg){ const e = $('#erro'); e.textContent = '⚠ ' + msg; e.classList.add('on'); }
+function limpaErro(){ $('#erro').classList.remove('on'); }
+
+/* ---------------------------------------------------------------- passos */
+function montarPassos(){
+  $('#steps').innerHTML = '';
+  PASSOS.forEach(([rotulo, ativo], i) => {
+    const el = document.createElement('div');
+    el.className = 'step ' + (ativo ? 'on' : 'off');
+    el.innerHTML = `<b>${i + 1}</b>${rotulo}`;
+    if (!ativo) el.title = 'ainda em construção — é o próximo passo do curso';
+    $('#steps').appendChild(el);
+  });
+}
+
+/* ---------------------------------------------------------------- modelos */
+async function carregarModelos(){
+  const r = await fetch('/api/status'); const s = await r.json();
+  state.modelos = s.modelos;
+  const box = $('#models'); box.innerHTML = '';
+  if (!s.modelos.length){
+    box.innerHTML = '<button disabled>sem checkpoint</button>';
+    erro('não há modelo em runs/ — o laboratório precisa de um checkpoint.');
+    return;
+  }
+  if (!state.modelo) state.modelo = (s.modelos.find(m => m.instrucao) || s.modelos[0]).id;
+  for (const m of s.modelos){
+    const b = document.createElement('button');
+    b.textContent = m.instrucao ? 'SFT' : 'base';
+    b.title = m.label;
+    b.classList.toggle('on', m.id === state.modelo);
+    b.onclick = () => {
+      state.modelo = m.id;
+      [...box.children].forEach(x => x.classList.remove('on'));
+      b.classList.add('on'); tokenizar();
+    };
+    box.appendChild(b);
+  }
+}
+
+/* ---------------------------------------------------------------- tokenizar */
+let timer = null;
+function aoEscrever(){ clearTimeout(timer); timer = setTimeout(tokenizar, 250); }
+
+async function tokenizar(){
+  const texto = $('#q').value;
+  if (!texto.trim()){ $('#tokens').innerHTML = ''; $('#medidor').innerHTML = '';
+    $('#avisos').innerHTML = ''; $('#legenda').innerHTML = ''; return; }
+  let r;
+  try {
+    r = await fetch('/api/lab/tokenize', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({texto, modelo: state.modelo, cru: state.cru})});
+  } catch (e) { erro('servidor fora do ar: ' + e.message); return; }
+  const dados = await r.json();
+  if (!r.ok){ erro(dados.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  state.tokens = dados.tokens; state.resumo = dados.resumo;
+  state.prompt = dados.prompt; state.cruReal = dados.cru;
+  sincronizarModo(dados.cru);
+  fecharFicha();
+  desenharTudo(dados);
+}
+
+/* O base não tem prompt de chat: o servidor sempre força o texto cru. A tela acompanha,
+   em vez de deixar o botão "prompt do chat" aceso mentindo para o aluno. */
+function sincronizarModo(cru){
+  [...$('#modo').children].forEach(b => {
+    const quer = b.dataset.cru === '1';
+    b.classList.toggle('on', quer === cru);
+    b.disabled = (b.dataset.cru === '0' && cru && !state.cru);
+    b.title = b.disabled ? 'o modelo base não conhece tokens de chat' : '';
+  });
+}
+
+function desenharTudo(dados){
+  const s = dados.resumo;
+  desenharMedidor(dados, s);
+  desenharLegenda(s);
+  desenharTokens();
+  desenharAvisos(dados, s);
+  aplicarFiltro();
+}
+
+function desenharMedidor(dados, s){
+  const m = $('#medidor');
+  m.innerHTML = `<span><b>${fmt(s.chars)}</b> caracteres</span>
+    <span>→</span><span><b>${fmt(s.n_tokens)}</b> tokens</span>
+    <span><em>${String(s.chars_por_token).replace('.', ',')}</em> chars por token</span>
+    <span>·</span><span>${fmt(s.bytes)} bytes</span>
+    <span>·</span><span>${fmt(s.distintos)} distintos</span>`;
+  if (s.cortado_em) m.innerHTML += `<span style="color:var(--yellow)">· cortado em ${s.cortado_em} tokens</span>`;
+  $('#vocab').textContent = fmt(s.vocab);
+}
+
+function desenharTokens(){
+  const box = $('#tokens'); box.innerHTML = '';
+  state.tokens.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.className = 'tk cat-' + t.kind + (t.repetido !== null ? ' rep' : '')
+                + (t.acentuado ? ' acb' : '');
+    b.style.setProperty('--c', CAT[t.kind] || '#5b93ff');
+    b.style.setProperty('--d', Math.min(i, 34));
+    b.dataset.i = i;
+    const tx = document.createElement('span');
+    tx.className = 'tx'; tx.textContent = visivel(t.texto || t.superficie);
+    const id = document.createElement('span');
+    id.className = 'idd'; id.textContent = t.id;
+    b.append(tx, id);
+    b.title = `${t.kind} · id ${t.id}\n` +
+      (t.repetido !== null ? `apareceu antes no token ${t.repetido}\n` : '') +
+      'clique para ver o vetor';
+    b.onclick = () => abrirFicha(t, b);
+    box.appendChild(b);
+  });
+  $('#hint2').textContent = state.cruReal
+    ? 'Estes são os tokens do seu texto puro — é o que o modelo base recebe.'
+    : 'O azul-violeta no começo e no fim são os tokens de chat: foi o que o SFT ensinou o '
+      + 'modelo a reconhecer. Eles são tokens de verdade, com id na mesma tabela.';
+}
+
+function desenharLegenda(s){
+  const box = $('#legenda'); box.innerHTML = '';
+  Object.entries(s.por_categoria).filter(([, n]) => n > 0).forEach(([cat, n]) => {
+    const el = document.createElement('button');
+    el.className = 'lg' + (state.filtro === cat ? ' sel' : '');
+    el.dataset.cat = cat;
+    el.style.setProperty('--c', CAT[cat] || '#5b93ff');
+    el.innerHTML = `<i></i>${cat}<s>${n}</s>`;
+    el.onclick = () => {
+      state.filtro = state.filtro === cat ? null : cat;
+      [...box.children].forEach(x => x.classList.toggle('sel', x.dataset.cat === state.filtro));
+      aplicarFiltro();
+    };
+    box.appendChild(el);
+  });
+}
+function aplicarFiltro(){
+  document.querySelectorAll('#tokens .tk').forEach(el => {
+    const t = state.tokens[+el.dataset.i];
+    el.classList.toggle('off', !!state.filtro && t.kind !== state.filtro);
+  });
+}
+
+function desenharAvisos(dados, s){
+  const box = $('#avisos'); box.innerHTML = '';
+  const add = (html) => { const d = document.createElement('div');
+    d.className = 'aviso'; d.innerHTML = `<span>💧</span><span>${html}</span>`;
+    box.appendChild(d); };
+  if (s.bytes > s.chars)
+    add(`<b>${s.bytes - s.chars} bytes a mais que caracteres.</b> Acento em UTF-8 não é um `
+      + `símbolo só: <code>ç</code> são 2 bytes. É por isso que o vocab é de bytes.`);
+  if (s.por_categoria['bytes'])
+    add(`<b>${s.por_categoria['bytes']} token(s) são um byte puro.</b> O vocab não tinha esse `
+      + `caractere inteiro, então o BPE soletrou byte por byte — o caractere vermelho na ficha.`);
+  if (s.repetidos)
+    add(`<b>${s.repetidos} repetições.</b> O modelo não reconhece a palavra: ele vê o <i>mesmo `
+      + `número</i> de novo. É assim que uma frase de 200 palavras custa 200 posições do contexto.`);
+  if (!s.por_categoria['especial'] && !state.cru)
+    add('Este é o modelo <b>base</b>: ele não conhece tokens de chat, só continua o texto — '
+      + 'por isso não há violeta aqui.');
+}
+/* ---------------------------------------------------------------- ficha */
+const cacheFicha = new Map();
+
+function kv(rotulo, valor, cls){
+  const d = document.createElement('div');
+  d.className = 'kv';
+  const l = document.createElement('label'); l.textContent = rotulo;
+  const b = document.createElement('b'); if (cls) b.className = cls;
+  b.textContent = valor;
+  d.append(l, b);
+  return d;
+}
+
+async function abrirFicha(t, el){
+  document.querySelectorAll('#tokens .tk.sel').forEach(x => x.classList.remove('sel'));
+  if (el) el.classList.add('sel');
+  await abrirFichaId(t.id, t);
+}
+
+async function abrirFichaId(id, meta){
+  const chave = state.modelo + ':' + id;
+  let f = cacheFicha.get(chave);
+  if (!f){
+    let r;
+    try {
+      r = await fetch(`/api/lab/embedding?modelo=${encodeURIComponent(state.modelo)}&id=${id}`);
+    } catch (e) { erro('servidor fora do ar: ' + e.message); return; }
+    f = await r.json();
+    if (!r.ok){ erro(f.erro || `HTTP ${r.status}`); return; }
+    cacheFicha.set(chave, f);
+  }
+  limpaErro();
+  const kind = (meta && meta.kind) || '';
+  $('#ftitulo').innerHTML =
+    `<i>ficha do token</i> ${visivel(f.texto || f.token)} `
+    + `<i>·</i> id <b style="color:${CAT[kind] || 'var(--accent2)'}">${f.id}</b>`;
+  const g = $('#fgrade'); g.innerHTML = '';
+  g.append(
+    kv('o humano lê', f.texto || '(espaço)', 'mono'),
+    kv('o vocab guarda', f.token, 'mono'),
+    kv('os bytes', f.bytes || '—', 'mono'),
+    kv('categoria', kind ? kind.replace('início', 'início de palavra') : '—'),
+    kv('norma ‖e‖', String(f.norma).replace('.', ',')),
+    kv('média da tabela', String(f.norma_media).replace('.', ',')),
+    kv('menor / maior valor', `${String(f.min).replace('.', ',')} … ${String(f.max).replace('.', ',')}`),
+    kv('desvio-padrão', String(f.std).replace('.', ',')));
+  $('#fdim').textContent = f.dim;
+  $('#fdimmaior').innerHTML = `a maior força está na dimensão <b>#${f.dim_mais_ativa.j}</b> `
+    + `(${String(f.dim_mais_ativa.valor).replace('.', ',')})`;
+  $('#fesq').textContent = '−' + String(f.escala).replace('.', ',');
+  $('#fesd').textContent = '+' + String(f.escala).replace('.', ',');
+  $('#ficha').classList.add('open');   // abre antes de desenhar: o canvas precisa da largura
+  desenharHeat(f);
+  desenharVizinhos(f);
+}
+
+function fecharFicha(){
+  $('#ficha').classList.remove('open');
+  document.querySelectorAll('#tokens .tk.sel').forEach(x => x.classList.remove('sel'));
+}
+
+function desenharHeat(f){
+  const cv = $('#heat'), ctx = cv.getContext('2d');
+  state.ultimaFicha = f;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const largura = cv.clientWidth || 880;
+  cv.width = Math.round(largura * dpr); cv.height = Math.round(84 * dpr);
+  const W = cv.width, H = cv.height, meio = H / 2, passo = W / f.dim;
+  const escala = f.escala || 0.25, t0 = performance.now(), dur = 420;
+  function quadro(agora){
+    const p = Math.min(1, (agora - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(231,235,242,.10)'; ctx.lineWidth = 1 * dpr;
+    ctx.beginPath(); ctx.moveTo(0, meio); ctx.lineTo(W, meio); ctx.stroke();
+    for (let j = 0; j < f.dim; j++){
+      const v = f.valores[j] * e;
+      const h = (v / escala) * (meio - 4 * dpr);
+      ctx.fillStyle = j === f.dim_mais_ativa.j ? '#ffd166' : (v >= 0 ? '#5b93ff' : '#ff9f6b');
+      ctx.fillRect(j * passo, meio - Math.max(0, h), Math.max(passo * 0.85, dpr),
+                   Math.max(Math.abs(h), 0.6 * dpr));
+    }
+    if (p < 1) requestAnimationFrame(quadro);
+  }
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const j = Math.max(0, Math.min(f.dim - 1, Math.floor((ev.clientX - rect.left) / rect.width * f.dim)));
+    $('#flectura').textContent = `dim #${j} = ${String(f.valores[j]).replace('.', ',')}`;
+  };
+  cv.onmouseleave = () => { $('#flectura').textContent = 'passe o mouse'; };
+  cv.onmouseleave();
+  requestAnimationFrame(quadro);
+}
+
+function desenharVizinhos(f){
+  const box = $('#fviz'); box.innerHTML = '';
+  const maxcos = Math.max(...f.vizinhos.map(v => Math.abs(v.cos)), 0.01);
+  for (const v of f.vizinhos){
+    const linha = document.createElement('div');
+    linha.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = visivel(v.texto || v.token);
+    t.title = `${v.token} · id ${v.id} · ‖e‖ ${String(v.norma).replace('.', ',')}`;
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (Math.abs(v.cos) / maxcos * 100).toFixed(1) + '%';
+    barra.appendChild(ench);
+    const c = document.createElement('div'); c.className = 'c';
+    c.textContent = String(v.cos).replace('.', ',');
+    linha.append(t, barra, c);
+    linha.onclick = () => abrirFichaId(v.id, null);
+    linha.style.cursor = 'pointer';
+    box.appendChild(linha);
+  }
+}
+
+/* ---------------------------------------------------------------- busca */
+async function procurar(){
+  const q = $('#bq').value.trim(); if (!q){ $('#res').innerHTML = ''; return; }
+  const r = await fetch(`/api/lab/lookup?modelo=${encodeURIComponent(state.modelo)}`
+                        + `&q=${encodeURIComponent(q)}`);
+  const dados = await r.json();
+  if (!r.ok){ erro(dados.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  const box = $('#res'); box.innerHTML = '';
+  if (!dados.achados.length){
+    box.innerHTML = '<span class="hint2">nada no vocab com isso — tente outro pedaço.</span>';
+    return;
+  }
+  for (const a of dados.achados){
+    const b = document.createElement('button');
+    b.innerHTML = `${visivel(a.texto)}<s>id ${a.id}</s>`;
+    b.title = `${a.token} · bytes ${a.bytes}`;
+    b.onclick = () => abrirFichaId(a.id, null);
+    box.appendChild(b);
+  }
+}
+
+/* ---------------------------------------------------------------- eventos */
+$('#q').addEventListener('input', aoEscrever);
+$('#modo').onclick = (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  state.cru = b.dataset.cru === '1';
+  [...$('#modo').children].forEach(x => x.classList.toggle('on', x === b));
+  tokenizar();
+};
+EXEMPLOS.forEach(t => {
+  const b = document.createElement('button');
+  b.className = 'chip';
+  b.textContent = t.length > 34 ? t.slice(0, 32) + '…' : t;
+  b.title = t;
+  b.onclick = () => { $('#q').value = t; tokenizar(); };
+  $('#exemplos').appendChild(b);
+});
+$('#bgo').onclick = procurar;
+$('#bq').addEventListener('keydown', e => { if (e.key === 'Enter') procurar(); });
+$('#ffecha').onclick = fecharFicha;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharFicha(); });
+let redesenho = null;
+window.addEventListener('resize', () => {
+  clearTimeout(redesenho);
+  redesenho = setTimeout(() => {
+    if (state.ultimaFicha && $('#ficha').classList.contains('open')) desenharHeat(state.ultimaFicha);
+  }, 150);
+});
+
+montarPassos();
+carregarModelos().then(tokenizar).catch(() => erro('o servidor não respondeu a /api/status'));
+$('#q').focus();
+</script>
+</body>
+</html>

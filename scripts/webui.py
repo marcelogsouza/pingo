@@ -12,6 +12,10 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
   Pergunta: …<|assistant|>`, parando no `<|end|>`. Sem contexto, só `Pergunta: …`.
 - **Uma geração por vez**: um `threading.Lock` não bloqueante devolve 429 se você mandar
   outra pergunta enquanto o modelo está no meio de uma resposta.
+- **Modo didático em `/lab`** (o passo 1 do curso): o prompt vira tokens coloridos com os
+  ids, a superfície byte-level e o vetor inicial de cada id — lógica em `pingo.didatic`,
+  que lê a tabela de embeddings do `.safetensors` na CPU. O lab não toca na GPU nem no lock
+  de geração: dá para abrir o laboratório enquanto uma resposta é gerada no chat.
 
 Uso:
   uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
@@ -44,12 +48,15 @@ from tokenizers import Tokenizer
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from pingo.didatic import (MAX_LAB_CHARS, TabelaEmbeddings, VIZINHOS_PADRAO,  # noqa: E402
+                           buscar, tokenizar)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
 
 MAX_PROMPT_CHARS = 4000
 MAX_CONTEXT_CHARS = 6000
+PAGINA_LAB = ROOT / "web" / "lab.html"
 
 
 # ---------------------------------------------------------------- modelos
@@ -81,8 +88,51 @@ class Server:
             else device
         self.specs = {s.id: s for s in specs if s.path.exists()}
         self._loaded: Loaded | None = None
+        self._tokenizadores: dict[str, Tokenizer] = {}
+        self._tabelas: dict[str, TabelaEmbeddings] = {}
         self._load_lock = threading.Lock()
         self._gen_lock = threading.Lock()
+
+    # -- tokenizer e tabela de embeddings (o que o laboratório usa: CPU) --
+    def arquivo_tokenizador(self, spec: ModelSpec) -> Path:
+        """O tokenizer do checkpoint; o base não traz o seu — cai no do projeto."""
+        proprio = spec.path / "tokenizer.json"
+        return proprio if proprio.exists() else ROOT / "tokenizer" / "tokenizer.json"
+
+    def _le_tokenizador(self, model_id: str) -> Tokenizer:
+        """Sem lock: quem chama já está dentro de `self._load_lock`."""
+        tok = self._tokenizadores.get(model_id)
+        if tok is None:
+            tok = Tokenizer.from_file(str(self.arquivo_tokenizador(self.specs[model_id])))
+            self._tokenizadores[model_id] = tok
+        return tok
+
+    def tokenizador_de(self, model_id: str) -> Tokenizer:
+        """Só o tokenizer — o laboratório tokeniza sem pôr modelo nenhum na GPU."""
+        with self._load_lock:
+            if self._loaded and self._loaded.spec.id == model_id:
+                return self._loaded.tokenizer
+            return self._le_tokenizador(model_id)
+
+    def tabela_de(self, model_id: str) -> TabelaEmbeddings:
+        """A `embed.weight` do checkpoint na CPU (~58 MB) com normas e cossenos, cacheada.
+
+        Lê direto do `model.safetensors`, sem construir o modelo: por isso o modo didático
+        funciona com o professor servindo na VRAM. A checagem de vocab é obrigatória — o
+        base tem 16.384 tokens e o SFT 16.387 (os 3 de chat são `added_tokens`).
+        """
+        with self._load_lock:
+            tabela = self._tabelas.get(model_id)
+            if tabela is None:
+                tabela = TabelaEmbeddings.do_checkpoint(self.specs[model_id].path)
+                tokenizer = self._le_tokenizador(model_id)
+                if tabela.pesos.shape[0] != tokenizer.get_vocab_size():
+                    raise ValueError(
+                        f"{model_id}: a tabela de embeddings tem {tabela.pesos.shape[0]} linhas "
+                        f"e o tokenizer tem {tokenizer.get_vocab_size()} tokens")
+                tabela.vocabulario(tokenizer)
+                self._tabelas[model_id] = tabela
+            return tabela
 
     # -- ciclo de vida -------------------------------------------------
     def carregar(self, model_id: str) -> Loaded:
@@ -91,9 +141,7 @@ class Server:
                 return self._loaded
             self.descarregar()
             spec = self.specs[model_id]
-            tok_path = spec.path / "tokenizer.json"
-            tokenizer = Tokenizer.from_file(
-                str(tok_path if tok_path.exists() else ROOT / "tokenizer" / "tokenizer.json"))
+            tokenizer = self._le_tokenizador(model_id)
             model = PingoLM.from_pretrained(spec.path, torch_dtype=torch.float32)
             model = model.to(self.device).eval()
             # só o SFT sabe parar no <|end|>; no base ele não significa nada
@@ -194,6 +242,16 @@ def sse(evento: str, dados: dict) -> str:
     return f"event: {evento}\ndata: {json.dumps(dados, ensure_ascii=False)}\n\n"
 
 
+def _modelo_pedido(srv: "Server", dados: dict) -> tuple[str | None, str | None, int]:
+    """`(modelo_id, erro, status)` para o que veio do navegador — vale para todas as rotas."""
+    if not srv.specs:
+        return None, "nenhum checkpoint encontrado em runs/ — treine o modelo", 503
+    model_id = dados.get("modelo") or next(iter(srv.specs))
+    if model_id not in srv.specs:
+        return None, f"modelo desconhecido: {model_id}", 400
+    return model_id, None, 200
+
+
 def create_app(server: Server | None = None) -> Flask:
     app = Flask(__name__)
     app.config["PINGO"] = server or Server(
@@ -223,11 +281,9 @@ def create_app(server: Server | None = None) -> Flask:
             return jsonify({"erro": "mensagem vazia"}), 400
         if len(texto) > MAX_PROMPT_CHARS or len(contexto) > MAX_CONTEXT_CHARS:
             return jsonify({"erro": f"texto acima de {MAX_PROMPT_CHARS} caracteres"}), 400
-        if not srv.specs:
-            return jsonify({"erro": "nenhum checkpoint encontrado em runs/ — treine o modelo"}), 503
-        model_id = dados.get("modelo") or next(iter(srv.specs))
-        if model_id not in srv.specs:
-            return jsonify({"erro": f"modelo desconhecido: {model_id}"}), 400
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
         if not srv.gen_lock.acquire(blocking=False):
             return jsonify({"erro": "o modelo já está gerando outra resposta"}), 429
 
@@ -246,6 +302,75 @@ def create_app(server: Server | None = None) -> Flask:
         return Response(stream(carregado, ids, params_de(dados), srv),
                         mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # -- modo didático (passo 1: do texto ao id e ao vetor inicial) ------
+    # Nada aqui põe modelo na GPU: tokeniza com o tokenizer do checkpoint e lê a tabela de
+    # embeddings do .safetensors na CPU. Por isso o lab não usa o lock de geração.
+
+    @app.get("/lab")
+    def lab():
+        if not PAGINA_LAB.exists():
+            return jsonify({"erro": f"página do laboratório ausente: {PAGINA_LAB}"}), 500
+        return send_file(PAGINA_LAB, mimetype="text/html")
+
+    @app.post("/api/lab/tokenize")
+    def lab_tokenize():
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        texto = dados.get("texto") or ""          # não strip: espaço também é token
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        if not texto.strip():
+            return jsonify({"erro": "texto vazio"}), 400
+        if len(texto) > MAX_LAB_CHARS:
+            return jsonify({"erro": f"texto acima de {MAX_LAB_CHARS} caracteres"}), 400
+        instrucao = srv.specs[model_id].instrucao
+        cru = bool(dados.get("cru")) or not instrucao
+        prompt = texto if cru else montar_prompt(
+            texto, (dados.get("contexto") or "").strip(), instrucao)
+        try:
+            saida = tokenizar(srv.tokenizador_de(model_id), prompt)
+        except Exception as exc:  # noqa: BLE001 — a UI mostra o motivo, não um 500 mudo
+            return jsonify({"erro": f"falha ao tokenizar: {exc}"}), 500
+        saida["prompt"] = prompt
+        saida["modelo"] = model_id
+        saida["rotulo"] = srv.specs[model_id].label
+        saida["cru"] = cru
+        return jsonify(saida)
+
+    @app.get("/api/lab/embedding")
+    def lab_embedding():
+        srv: Server = app.config["PINGO"]
+        model_id, erro, status = _modelo_pedido(srv, request.args)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            tok_id = int(request.args.get("id", ""))
+        except ValueError:
+            return jsonify({"erro": "falta o id do token (inteiro)"}), 400
+        k = int(_num(request.args, "k", VIZINHOS_PADRAO, 1, 50, inteiro=True))
+        try:
+            ficha = srv.tabela_de(model_id).ficha(tok_id, k=k)
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        return jsonify(ficha)
+
+    @app.get("/api/lab/lookup")
+    def lab_lookup():
+        srv: Server = app.config["PINGO"]
+        model_id, erro, status = _modelo_pedido(srv, request.args)
+        if erro:
+            return jsonify({"erro": erro}), status
+        consulta = (request.args.get("q") or "").strip()
+        if not consulta:
+            return jsonify({"erro": "diga um id ou uma palavra"}), 400
+        limite = int(_num(request.args, "n", 20, 1, 50, inteiro=True))
+        try:
+            achados = buscar(srv.tokenizador_de(model_id), consulta, limite=limite)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        return jsonify({"consulta": consulta, "modelo": model_id, "achados": achados})
 
     return app
 
@@ -385,6 +510,10 @@ PAGE = """<!doctype html>
   .models button:hover{color:var(--text)}
   .models button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
   .models button:disabled{opacity:.45;cursor:not-allowed}
+  .lablink{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--muted);
+    font-size:12.5px;border:1px solid var(--line);background:var(--panel);padding:8px 12px;
+    border-radius:10px;transition:.15s;white-space:nowrap}
+  .lablink:hover{color:var(--text);border-color:var(--line2);transform:translateY(-1px)}
   #chat{display:flex;flex-direction:column;gap:18px;padding-top:10px}
   .msg{display:flex;gap:12px;animation:in .25s ease}
   @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -488,6 +617,7 @@ PAGE = """<!doctype html>
       <div><b>Pingo</b> <span>· 120M em português</span></div>
     </div>
     <div class="spacer"></div>
+    <a class="lablink" href="/lab" title="Ver o modelo por dentro: tokenização, cores, embeddings">🔬 laboratório</a>
     <div class="models" id="models"></div>
   </header>
 
