@@ -23,8 +23,11 @@ def sample_next(logits: torch.Tensor, temperature: float = 1.0,
         kth = x.topk(k, dim=-1).values[:, -1:]
         x = x.masked_fill(x < kth, float("-inf"))
     if top_p and top_p < 1.0:
+        # nucleus de verdade: o acumulado é sobre as PROBABILIDADES (cumsum em cima de
+        # logits era o jeito antigo, e cortava tudo quando o logit era positivo)
         sorted_x, order = x.sort(dim=-1, descending=True)
-        keep = sorted_x.cumsum(dim=-1).sub(sorted_x) < top_p  # sempre mantém o melhor
+        p_ord = sorted_x.softmax(dim=-1)
+        keep = p_ord.cumsum(dim=-1).sub(p_ord) < top_p  # sempre mantém o melhor
         mask = torch.full_like(keep, True).scatter_(1, order, keep)
         x = x.masked_fill(~mask, float("-inf"))
     return torch.multinomial(x.softmax(dim=-1), num_samples=1)

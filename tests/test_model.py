@@ -181,6 +181,17 @@ def test_sample_next_greedy_topk():
     assert draws <= {1, 3}  # top-2 são os ids 1 e 3
 
 
+def test_sample_next_top_p_e_nucleus_de_probabilidade():
+    """top-p acumula **probabilidade**, não logit: com cumsum em logits (o jeito antigo,
+    pegado pela roleta do ⑥) os ids 2 e 3 sumiam e até o 1 ficava de fora aos 90%."""
+    logits = torch.tensor([[5.0, 4.0, -2.0, -3.0]])
+    p = logits.softmax(-1)[0]
+    assert float(p[0]) < 0.9 < float(p[0] + p[1])     # nucleus exato = {0, 1}
+    torch.manual_seed(1)
+    draws = {int(sample_next(logits, temperature=1.0, top_p=0.9)) for _ in range(60)}
+    assert draws == {0, 1}                            # o azarão 1 gira; a cauda (2,3), não
+
+
 def test_generate_greedy_deterministico_e_sem_cache_match(tiny_model):
     """Greedy com cache == re-forward completo sem cache (mesmos ids)."""
     prompt = [5, 11, 23, 7]
