@@ -101,12 +101,14 @@ incremental, a troca de modelo que descarrega o anterior e as rotas do laborató
 
 A segunda página do mesmo servidor: **tokenização colorida, ids, bytes e o vetor inicial de
 cada token** (passo ①), **a frase como matriz desenhada, as normas da tabela inteira e a
-tabela lida de volta** (passo ②, o gancho do `lm_head` tied) e **o relógio do RoPE + os mapas
-de atenção por cabeça** (passo ③, com `capture` dos intermediários do forward). Os passos ①–②
+tabela lida de volta** (passo ②, o gancho do `lm_head` tied), **o relógio do RoPE + os mapas
+de atenção por cabeça** (passo ③, com `capture` dos intermediários do forward), **a régua do
+RMSNorm + as portas do SwiGLU** (passo ④) e **a norm final + os 16.387 logits reais da
+posição escolhida** (passo ⑤ — o lm head é a própria tabela do ①, tied). Os passos ①–②
 não usam GPU nem o lock de geração (lêem `embed.weight` do `.safetensors` na CPU), então dá
-para abrir o laboratório enquanto o chat gera. O ③ roda um forward real no device do servidor
-sob o `gen_lock` (a rota avisa se o chat está falando) e corta a frase em 64 tokens. Nota
-completa: [[Modo didático]].
+para abrir o laboratório enquanto o chat gera. O ③ roda o único forward real no device do
+servidor sob o `gen_lock` (as rotas avisam se o chat está falando) e corta a frase em 64
+tokens; ④ e ⑤ pegam carona na mesma captura. Nota completa: [[Modo didático]].
 
 ## Ver também
 

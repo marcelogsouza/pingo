@@ -279,16 +279,20 @@ par que roda junto é **(xⱼ, xⱼ₊₃₂)** — 32 dimensões adiante, não 
 gire coordenadas adjacentes mostra outra matemática; no `/lab` o `head_dim/2` vem da captura e
 o teste de equivalência com o `RoPE` do modelo fecha a porta.
 
-**O dict do `capture` é um só por bloco e tem 17 chaves agora.** ③ escreveu `q_lin/q/k_lin/k/w`
-e ④ escreveu o bloco (`x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`) **no mesmo dict** — quem iterar as
-chaves ou fixá-las em teste precisa esperar as duas famílias (o teste do ③ fixa o conjunto
-inteiro de propósito: crescer a carona é decisão consciente, não acidente).
+**O dict do `capture` é um só por bloco e cresceu duas vezes.** ③ escreveu `q_lin/q/k_lin/k/w`
+e ④ escreveu o bloco (`x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`) **no mesmo dict**; ⑤ ainda escreve
+`nfinp/nfin` (a norm final antes/depois do γ) **só no último dict**. Quem iterar as chaves ou
+fixá-las em teste precisa esperar as famílias (o teste fixa os conjuntos inteiros de
+propósito: crescer a carona é decisão consciente, não acidente — e o `nfinp/nfin` fora do
+último bloco seria um bug silencioso).
 
-**A captura serve ③ e ④, mas há UMA vaga.** `Server._captura` guarda o último forward (chave
-`modelo+ids`, ~60 MB de tensores fp32 com 64 tokens). Duas abas com frases diferentes se
-calcaram: cada troca refaz o forward. Trocar camada/cabeça/token na MESMA frase é de graça
-(4–12 ms). E o ⑤ não tem nada novo para capturar de graça ainda: a `norm` final + os logits
-precisam entrar na carona antes.
+**A captura serve ③, ④ e ⑤, mas há UMA vaga.** `Server._captura` guarda o último forward
+(chave `modelo+ids`, ~60 MB de tensores fp32 com 64 tokens, já contando os logits
+`[64×16.387]` ≈ 4 MB que o ⑤ consome). Duas abas com frases diferentes se calcaram: cada
+troca refaz o forward. Trocar camada/cabeça/token/posição na MESMA frase é de graça (4–16 ms).
+Os logits do ⑤ são os do **próprio forward** (`out.logits`), não uma recomputação: se alguém
+"otimizar" o `captura_atencao` chamando o modelo sem guardar a saída, a aba ⑤ desenha número
+inventado e nada quebra no resto — só a aula.
 
 ## Ver também
 

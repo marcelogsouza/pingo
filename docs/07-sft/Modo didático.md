@@ -62,6 +62,12 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 
 ## O que a tela faz (passo ⑤)
 
+Em palavras simples: depois da última camada, cada token da frase é **um vetor só**. O
+`lm_head` multiplica esse vetor pela **mesma tabela de 16.387 × 896 do passo ①** — e cada
+linha do vocab recebe uma **nota**, o *logit*. Só isso: nenhum peso novo (isso é o *tied*),
+e nenhuma escolha — quem escolhe entre as notas é o passo ⑥. A aba mostra as notas da posição
+escolhida e prova que a tabela é a mesma de onde o curso começou.
+
 | elemento | por quê |
 |---|---|
 | **chips de posição** | os logits dependem da posição: cada linha da frase prediz o próximo token, e a última (`<\|assistant\|>`) é o cardápio da geração — é o ponto onde o chat está quando o ⑥ entrar |
@@ -71,7 +77,7 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 | **o próximo token real: nota e posto** | professor-forcing honesto: "o que o modelo achava que vinha aqui" vs o que a frase tinha — em `Ġinvestir → até`, o sucessor real ficou em **5º de 16.387** |
 | **a mesma tabela lida duas vezes** | lado a lado: a prévia do ② (vetor inicial × tabela) e o logit real do ⑤ (vetor final × tabela) — se as ordens fossem iguais, as 12 camadas não teriam feito nada |
 
-## As nove decisões que importam
+## As dez decisões que importam
 
 **1. Superfície ≠ texto.** Num BPE byte-level o token é uma sequência de *bytes*: o vocab
 guarda `ĠatÃ©`, o humano lê ` até`. As duas aparecem na tela, lado a lado, porque é ali que o

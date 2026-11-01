@@ -95,7 +95,7 @@ uv run python scripts/sample.py --model runs/sft-120m/final --no-bench
 uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
 uv run python scripts/webui.py --host 127.0.0.1     # só esta máquina
 uv run python scripts/webui.py --device cpu --port 8080
-#   /      → chat            /lab → modo didático (①–④; só ③–④ carregam o modelo — um forward só)
+#   /      → chat            /lab → modo didático (①–⑤; só ③–⑤ carregam o modelo — um forward só)
 ```
 
 ## Comparação de professores (opcional, custa centavos)

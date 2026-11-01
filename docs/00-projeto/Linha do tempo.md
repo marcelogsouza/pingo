@@ -83,8 +83,10 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | — | `1fb5fc0` | **Modo didático passo ④ (RMSNorm + SwiGLU)**: a carona do ④ **estende, não bifurca** — o `capture` ganha o bloco inteiro (`x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2` + os γ), preenchido na passagem real sem duplicar a conta (logits seguem bit a bit idênticos; `x2[k] == x0[k+1]` e ‖RMSNorm puro‖ = √d são testes). Rota `/api/lab/bloco` e três cards: a **régua** (‖x‖ → RMS puro → com γ → Δ da camada), o **γ desenhado** (faixa alternável attn/MLP) e o **SwiGLU** (gate/up/produto na mesma escala + portas abertas). **Um único forward serve ③ e ④**: trocar camada custa 12 ms. Números no SFT: RMS puro 29,92 p/ todos — chat 29,69 (o piso do ε); γ da camada 1 quase unânime (0,86–0,93); resíduo cresce **100×** até a camada 12; `Ġinvestir` abre **151 de 2.304** portas ([[Modo didático]]) |
 | — | — | Suíte: **163 casos** em 12 arquivos (+1 `test_model` do bloco, +3 `test_didatic` da ficha do bloco, +3 `test_webui` da rota — incluindo *a captura do ③ serve o ④*) |
 | — | `5befef1` | `scripts/webui.sh`: levanta a WebUI em foreground com **Ctrl+C desligando tudo** (e derruba a instância anterior na 8010); conferido de ponta a ponta antes do teste na GPU livre |
+| — | `25d9d7b` | **Modo didático passo ⑤ (lm head)**: a última carona — o **último** dict do `capture` ganhou `nfinp/nfin` (a norm final antes/depois do γ, pelas mãos do próprio `RMSNorm`) e o `Server` passou a guardar os **logits do próprio forward** (`out.logits` `[64×16.387]` ≈ 4 MB): nada é recomputado. Rota `/api/lab/lmhead` + quatro cards: a **última régua** (‖x₂‖ 28,8–57,7 → **29,93 para todos** — sem o piso do ε, nenhum vetor é pequeno depois de 12 camadas → 46–48 com γ), o **γ final desenhado** (média **1,61**, σ 0,06 — o botão de volume do produto escalar), a **régua dos 16.387 logits** com top-10 e o **posto do sucessor real** (`investir → até`: **5º de 16.387**, o favorito era `ĠR` — o fantasma do R$) e **a mesma tabela lida duas vezes** (prévia ② × logit ⑤). O **tie provado bit a bit**: recomputar `nfin @ tabelaᵀ` com o `safetensors` na CPU bate com os logits do forward (**maxdiff 0,0**) — virou teste ([[Modo didático]]) |
+| — | — | Suíte: **169 casos** em 12 arquivos (+1 `test_model` do tied/norm final, +2 `test_didatic` da ficha do lm head, +3 `test_webui` da rota — a captura do ③ agora serve ③, ④ **e** ⑤; 16 ms por posição nova na CPU) |
 
-Quatro dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
+Cinco dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
 head → amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar
 o modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
 
@@ -110,7 +112,7 @@ flowchart LR
         sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
     subgraph "2026-11-01"
-        lab["modo didático<br/>(/lab · passos ①–④)"]
+        lab["modo didático<br/>(/lab · passos ①–⑤)"]
     end
     p6a --> p6b --> p7
     wui --> lab

@@ -1,6 +1,6 @@
 ---
 tags: [pingo, referencia, glossario]
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # Glossário
@@ -24,6 +24,11 @@ proporcional à posição. [[RoPE]]
 
 **Tied embeddings** — `lm_head.weight is embed.weight`: uma única matriz serve para ler e
 prever tokens. [[Inicialização e embeddings tied]]
+
+**Logits** — as notas que o `lm_head` dá a cada token do vocab para uma posição (`[16.387]`
+por posição); não são probabilidades — a softmax vem depois (e é o passo ⑥ do `/lab`). Uma
+linha do vocab pontua alto se o vetor final da posição aponta na direção do embedding daquele
+token. [[Modo didático]]
 
 **head_dim** — dimensão de cada cabeça de atenção (aqui 64). [[Atenção causal]]
 

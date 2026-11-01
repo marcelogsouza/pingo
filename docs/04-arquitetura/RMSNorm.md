@@ -1,7 +1,7 @@
 ---
 tags: [pingo, arquitetura, norm]
 etapa: 5
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # RMSNorm
@@ -82,6 +82,15 @@ flowchart LR
 ```
 
 Total de parâmetros em normas: $2 \times 12 \times 896 + 896 = 22.400$ (0,018% do modelo).
+
+> [!info] A norma final medida no `/lab` (passo ⑤)
+> No checkpoint SFT, os vetores que chegam à norma final medem ‖x₂‖ de 28,8 a 57,7 e o
+> RMSNorm **puro** devolve √896 = 29,93 para *todos* os tokens (aqui o ε não pesa: nenhum
+> vetor é pequeno depois de 12 camadas — contraste com a camada 1, onde os tokens de chat
+> davam 29,69). O $\gamma$ final, porém, é a norma mais falante do modelo: média **1,61**
+> (min 1,28, max 1,70, σ 0,06) — quase não distingue dimensões, mas **estica o vetor
+> ~1,6×** (normas finais 46–48). Como o `lm_head` é produto escalar, isso é um volume
+> geral de confiança: multiplica todos os logits. Números em [[Modo didático]].
 
 > [!bug] `torch.Tensor.ones_()` não existe
 > Para inicializar $\gamma = 1$ o código usa `weight.data.fill_(1.0)`. O erro original

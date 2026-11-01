@@ -1,7 +1,7 @@
 ---
 tags: [pingo, arquitetura, init, embeddings]
 etapa: 5
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # Inicialização e embeddings tied
@@ -84,6 +84,13 @@ self.lm_head.weight = self.embed.weight        # MESMO tensor
 Matematicamente: o logit do token $v$ é $w_v^{\top} h$. Com tie, $w_v$ é o próprio embedding de
 $v$ — o modelo aprende um espaço onde "apontar na direção de $v$" significa "o próximo token é
 $v$".
+
+> [!info] A identidade comprovada bit a bit (passo ⑤ do `/lab`)
+> No modo didático, recomputar os logits como `nfin @ embed.weightᵀ` — com a tabela lida
+> direto do `model.safetensors` na **CPU** — bate com os logits que o forward do modelo na CPU
+> produziu: **maxdiff 0,0**, exato. É a demonstração experimental de que o `lm_head` *é* a
+> tabela do passo ①, não uma camada parecida com ela. A igualdade `logits == nfin @
+> embed.weightᵀ` também é asserção da [[Suíte de testes]]. Números em [[Modo didático]].
 
 ### E o HF v5 exige declaração explícita
 
