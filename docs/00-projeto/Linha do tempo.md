@@ -76,6 +76,8 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | 12:20 | `9402fe9` | o lab passa a envolver o texto **só** com `<\|user\|>…<\|assistant\|>` (sem o `Pergunta:` do dataset) — revelou que `Quanto` (6.666) e `ĠQuanto` (8.579) são tokens diferentes: o espaço faz parte do token |
 | — | — | A tabela de embeddings passou a ser lida **direto do `model.safetensors` na CPU** (58 MB) — o lab roda sem encostar na VRAM do professor |
 | — | — | Suíte: **141 casos** em 12 arquivos (`pingo/didatic.py` novo, +13; WebUI 23) |
+| — | `0baf82a` | **Modo didático passo ② (embedding)**: o stepper virou abas; a frase vira uma **matriz desenhada** (faixa por token preservando o maior módulo), a tabela inteira vira **histograma de normas** — e as três menores dos 16.387 vetores são exatamente os tokens de chat (0,235/0,236/0,382) — e a tabela é **lida de volta** (`v·W`, tied): nota e cosseno ordenam diferente porque a nota inclui a norma; `<|assistant|>` lido pela nota é lixo mas em cosseno o nº 1 é `<|user|>` com 0,986 ([[Modo didático]]) |
+| — | — | Suíte: **149 casos** em 12 arquivos (+4 `test_didatic`, +4 `test_webui`) |
 
 O passo 1 de uma esteira de sete (tokenização → embedding → RoPE/atenção → MLP → lm head →
 amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar o

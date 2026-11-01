@@ -111,14 +111,14 @@ pingo/
 9. **Mid-training / SFT** — dataset de instruções pt (ex.: datasets pt-BR de instruções no HF). ✔ *feito em 2026-10-30/31: SFT-1..4 + 30k pares; o run que vale é `runs/sft-120m-ep1`.*
 10. **RLHF** — começar com **DPO** (dados de preferência pt-BR já existem, ex.: `Hub-Ai/ptbr-human-preferences`); PPO + reward model como opção avançada.
 11. **Avaliação formal** — benchmarks pt (ex.: tarefas estilo NeurIPS-BR-LP, hellaswag-pt).
-12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passo 1 ✔ entregue** (tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números do embedding e os vizinhos por cosseno). ✔ Critério do passo 1: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
-    - **② embedding** — o id → vetor, e a norma/como a tabela é usada também no `lm_head` (tied).
+12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔ e ② ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
+    - **② embedding** — ✔ 2026-11-01: o id → vetor (matriz), as normas de todos os vetores, e a prévia do `lm_head` tied (produto escalar ordena diferente do cosseno porque a nota inclui a norma).
     - **③ RoPE + atenção** — Q/K/V, o ângulo da RoPE por posição e o mapa de atenção do último token (o slide mais esperado).
     - **④ RMSNorm + SwiGLU** — o resto do bloco; comparação antes/depois da normalização.
     - **⑤ lm head** — os 16.387 logits, a mesma tabela do passo 1.
     - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.
     - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação.
-    - Critério geral: nada de GPU até a etapa ②; a partir daí, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM.
+    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM.
 
 ## Decisões fechadas ✔
 

@@ -20,8 +20,8 @@ está no `git log`.
 steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente, KV cache
 5,8–11,8× (B=16). **SFT concluído**: `runs/sft-120m-ep1/final/` (1 época, lr 5e-5) — formato
 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino **1,91×**. WebUI em Flask para conversar
-com ele e um **modo didático em `/lab`** (o curso: tokenização colorida + embeddings
-iniciais). Suíte: **141 testes verdes**.
+com ele e um **modo didático em `/lab`** (o curso: ① tokenização colorida e ② a frase
+como matriz + a tabela inteira + a lida de volta tied). Suíte: **149 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
@@ -31,7 +31,7 @@ iniciais). Suíte: **141 testes verdes**.
 | SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
 | avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
 | WebUI | `uv run python scripts/webui.py` → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming |
-| modo didático | mesma UI, rota **`/lab`** (lógica em `pingo/didatic.py`, página em `web/lab.html`) | ✅ passo 1 (tokenização); passos 2–7 por fazer |
+| modo didático | mesma UI, rota **`/lab`** (lógica em `pingo/didatic.py`, página em `web/lab.html`) | ✅ passos ①–② (tokenização + embedding); ③–⑦ por fazer — o ③ pede o modelo na GPU |
 
 - **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas
   esquece o português (fator 6,94× contra 1,91×). Ficou como contraexemplo em
@@ -39,8 +39,9 @@ iniciais). Suíte: **141 testes verdes**.
 - O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
 - Próximos, em `PLAN.md` (passo 12, com os critérios): SFT-5 (opcional, instruções gerais/
-  replay de texto), os passos ②–⑦ do modo didático (② embedding → ③ RoPE/atenção →
-  ④ RMSNorm/SwiGLU → ⑤ lm head → ⑥ amostragem → ⑦ loop) e Passo 8 (**350M — suspenso**).
+  replay de texto), os passos ③–⑦ do modo didático (③ RoPE/atenção →
+  ④ RMSNorm/SwiGLU → ⑤ lm head → ⑥ amostragem → ⑦ loop; o ③ é o primeiro que precisa de
+  forward com captura de intermediários — avisar antes de qualquer CUDA) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 

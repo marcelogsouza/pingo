@@ -259,6 +259,12 @@ a tabela que o laboratório desenha é essa chave do `model.safetensors` (58 MB 
 chat manda (`Quanto` 6.666 × `ĠQuanto` 8.579): **o espaço faz parte do token**. Para
 gerar, o chat continua em `montar_prompt()`; o lab é leitura, não geração.
 
+**Canvas só desenha depois de estar na página.** O passo ② do `/lab` desenha um
+`<canvas>` por linha da matriz usando `canvas.clientWidth` para a resolução — antes do
+`appendChild` isso dá 0, o código cai no fallback de 420 px e o CSS estica tudo: borrão.
+Primeiro cola na página, depois pinta (`pintarFaixa` depois do `appendChild`). Vale para o
+histograma e para o mapa de atenção do passo ③.
+
 **O modo didático não pode chamar `Server.carregar()`.** `carregar()` sobe o modelo para a
 VRAM — exatamente o que a regra do professor proíbe. As rotas `/api/lab/*` usam
 `tokenizador_de()` e `tabela_de()`, que ficam na CPU.

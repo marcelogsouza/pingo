@@ -140,19 +140,24 @@ formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 
 ### Modo didático — `/lab`
 
-A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. O
-passo 1 está pronto — **tokenização**:
+A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. Os
+passos ① e ② estão prontos — **tokenização** e **embedding**:
 
 - o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
   número, byte puro), cada um com o **id** da tabela embaixo;
 - clicando, abre a **ficha do token**: o texto humano ⇄ a superfície byte-level (`ĠpreÃ§o`),
   os bytes em hex, a norma, a faixa de calor dos **896 números** do embedding inicial e os
   **vizinhos por cosseno** — `Ġinvestir` mora ao lado de `Ġapostar`, `Ġgastar`, `Ġcomprar`;
-- busca no vocab (`4560`, `ção` ou `Ã§Ã£o`) e o medidor `caracteres → tokens · chars/token`.
+- busca no vocab (`4560`, `ção` ou `Ã§Ã£o`) e o medidor `caracteres → tokens · chars/token`;
+- no passo ② a frase vira uma **matriz desenhada** (uma linha por token, norma à direita),
+  a tabela inteira vira um **histograma de normas** — as três menores são exatamente os
+  tokens de chat — e a tabela é **lida de volta**: as notas que um `lm_head` tied daria do
+  vetor inicial, lado a lado com o cosseno (a ordem muda: nota inclui a norma).
 
 Nada do `/lab` usa a GPU: a tabela de embeddings é lida do `model.safetensors` na CPU, então
-o laboratório funciona mesmo com outro trabalho na VRAM. Os passos 2–7 da esteira (embedding,
-RoPE/atenção, MLP, lm head, amostragem, loop) aparecem desabilitados — é o próximo trabalho.
+o laboratório funciona mesmo com outro trabalho na VRAM. Os passos ③–⑦ da esteira (RoPE/atenção,
+RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem como "em breve" — o ③ é o
+primeiro que vai precisar do modelo inteiro na GPU.
 Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 ## Aviso

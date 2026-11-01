@@ -4,18 +4,19 @@ etapa: 0
 atualizado: 2026-11-01
 ---
 
-# Modo didático (`/lab`) — passo 1: tokenização
+# Modo didático (`/lab`) — passos ① e ②: tokenização e embeddings
 
 O Pingo é um **projeto-curso** ([[Visão e filosofia]]): o valor está tanto no modelo quanto em
 conseguir *mostrar* o que acontece dentro dele. O modo didático é a tela que faz isso — um
 "laboratório" na mesma WebUI, com uma esteira de etapas no topo (tokenização → embeddings →
-atenção → MLP → lm head → amostragem → loop) e, por enquanto, a **primeira etapa pronta**.
+atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ① e ②
+estão prontos, ③–⑦ aparecem marcados "em breve".
 
 ```
 http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 ```
 
-## O que a tela faz
+## O que a tela faz (passo ①)
 
 | elemento | por quê |
 |---|---|
@@ -28,7 +29,17 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 | **busca no vocab** | digita `4560`, `ção` ou `Ã§Ã£o` e cai na mesma ficha |
 | debounce de 250 ms | o aluno tokeniza enquanto digita; nada de botão "processar" |
 
-## As quatro decisões que importam
+## O que a tela faz (passo ②)
+
+| elemento | por quê |
+|---|---|
+| **a frase como matriz** | cada token vira uma linha desenhada (o vetor resumido, azul/laranja na mesma escala da ficha, norma ‖e‖ à direita) — "a frase é uma matriz `n × 896`" deixa de ser figura de linguagem; clicar na linha abre a ficha |
+| **histograma das normas** | os 16.387 vetores numa barra só, com a média marcada — a distribuição é estreita (σ ≈ 0,10) *exceto* pelos tokens de chat, que despencam |
+| **extremos com nome** | os vetores mais longos e mais curtos da tabela, clicáveis — o aluno vê quem é quem sem abstração |
+| **a tabela lida de volta** | produto escalar `v·W` do vetor inicial: as notas que um `lm_head` tied daria, lado a lado com o cosseno — a ordem **muda** porque a nota inclui a norma. É o gancho anunciado do passo ⑤ |
+| chips de escolha | no ② o aluno escolhe qual token da frase quer "ler de volta" |
+
+## As seis decisões que importam
 
 **1. Superfície ≠ texto.** Num BPE byte-level o token é uma sequência de *bytes*: o vocab
 guarda `ĠatÃ©`, o humano lê ` até`. As duas aparecem na tela, lado a lado, porque é ali que o
@@ -66,6 +77,21 @@ são `added_tokens`, [[Treino SFT]]). Tokenizar com um tokenizer e desenhar a fi
 tabela do outro daria o vetor do token errado — silenciosamente. `Server.tabela_de()` recusa
 o par quando `embed.weight` e `tokenizer.get_vocab_size()` não batem.
 
+**5. A matriz resume sem apagar os picos.** Desenhar 896 colunas por linha é ilegível; a
+faixa resume cada vetor a 128 valores (`FAIXA_BINS`), e em cada grupo de dimensões sobrevive
+o de **maior módulo**, não a média — a média apagaria justamente os picos que dão forma à
+linha. A matriz desenha no máximo 96 linhas (`MATRIZ_LINHAS`; `cortado_em` avisa com o total)
+e o pedido de ids é limitado a `MAX_LAB_TOKENS`. Detalhe de canvas que morde duas vezes: o
+`clientWidth` do `<canvas>` é 0 antes do `appendChild` — primeiro cola na página, depois
+desenha (ver [[Gotchas]]).
+
+**6. Nota do lm_head ≠ cosseno — e a tela mostra os dois.** `lida_de_volta()` multiplica o
+vetor pela tabela inteira (`pesos @ pesos[id]`: a nota que um lm_head tied daria *naquele*
+vetor) e devolve duas ordenações: `por_pontos` (produto escalar, **inclui a norma** do
+vizinho) e `por_cos` (direção pura). A ordem muda na tela, e essa é a lição. A honestidade
+obrigatória: com o vetor *inicial* isso é prévia do passo ⑤, não o logit real — os logits de
+verdade saem depois das 12 camadas; a nota diz isso no rodapé da seção.
+
 ## O contrato (o que o front-end recebe)
 
 ```
@@ -78,10 +104,18 @@ GET  /api/lab/embedding?modelo=sft&id=4560
   → {id, token, texto, bytes, dim, valores[896], norma, min, max, std, escala,
      norma_media, dim_mais_ativa, vizinhos:[{id, token, texto, cos, norma}]}
 GET  /api/lab/lookup?modelo=sft&q=ção
+POST /api/lab/matriz {modelo, ids[]}          // POST: 512 ids não caberiam numa URL
+   → {dim, bins, escala, cortado_em, linhas:[{id, token, texto, norma, std, faixa[bins]}]}
+GET  /api/lab/stats?modelo=sft
+   → {vocab, dim, norma:{media, mediana, min, max, std}, histograma:[{desde, ate, cont}],
+      maiores[6], menores[6], norma_vetor_medio}
+GET  /api/lab/lida?modelo=sft&id=4560        // a tabela "lida de volta" (passo ②)
+   → {id, token, texto, norma, pontos_consigo,
+      por_pontos:[{id, token, texto, pontos, cos, norma}], por_cos:[…]}
 ```
 
-Tetos: 4.000 caracteres no pedido e 512 chips desenhados (`cortado_em` avisa). A lógica toda
-mora em `pingo/didatic.py` (puro, testado em CPU); a página é `web/lab.html`; as rotas em
+Tetos: 4.000 caracteres no pedido, 512 chips desenhados (`cortado_em` avisa) e 96 linhas de
+matriz (`MATRIZ_LINHAS`). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU); a página é `web/lab.html`; as rotas em
 `scripts/webui.py` são finas.
 
 ## O que os números reais do Pingo mostram nesta tela
@@ -102,12 +136,32 @@ Medidos em `runs/sft-120m-ep1/final` (tabela fp32, 16.387 × 896):
   o porquê da [[Avaliação SFT|recusa fraca]] sem dizer uma palavra de loss.
 - `Ċ` (quebra de linha) tem `<|eos|>` como vizinho nº 1 (0,35) — outro bom achado para aula.
 
+No passo ② (medidos hoje na mesma tabela):
+
+- **a tabela é estreita, com três buracos**: normas com média 1,139, mediana 1,126 e σ só
+  **0,103** — e as **três menores normas dos 16.387 vetores são exatamente os tokens de
+  chat**: `<|user|>` 0.235, `<|assistant|>` 0.236, `<|end|>` 0.382. É a mesma prova de que o
+  SFT mal os moveu, agora visível como três barras solitárias no começo do histograma. Os
+  maiores são sufixos e fragmentos — `mente` 1.577, `Ã¡c` 1.478, `es` 1.471 — não palavras.
+- **na matriz da frase, o chat aparece achatado**: nas 11 linhas de `Quanto a Companhia vai
+  investir até 2028?` os nove tokens de conteúdo têm norma 0,94–1,29 e os dois de chat são
+  duas linhas visivelmente baixinhas (0,235/0,236).
+- **a lida de volta ensina a diferença nota × cosseno**: para `Ġinvestir` o primeiro colocado
+  pela nota é *ele mesmo* (1,027 = ‖e‖² — o vetor inicial se lê a si mesmo primeiro), depois
+  `Ġapostar` 0,51 · `Ġgastar` 0,43; pelo cosseno a ordem sai sem si e com pesos diferentes.
+  Para `<|assistant|>` a lista por nota é **lixo** (`<|pad|>` 0,18 e bytes puros — a norma é
+  pequena demais para pontuar), mas pelo cosseno o nº 1 é `<|user|>` com **0,986**: os dois
+  tokens de chat são quase o mesmo vetor — mais uma pista da [[Avaliação SFT|recusa fraca]].
+- o vetor médio da tabela tem norma só 0,253 (contra média de normas 1,139): os vetores **não
+  apontam para o mesmo lado** — a média cancela. Bom para desmanchar a ideia de que
+  "um token é igual ao outro".
+
 ## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
 
-`② embedding (896)` · `③ RoPE + atenção` · `④ RMSNorm + SwiGLU` · `⑤ lm head — a mesma
-tabela` · `⑥ amostragem` · `⑦ loop`. As etapas ③ em diante vão precisar de *forward com
-captura de intermediários* — aí sim o laboratório vai tocar a GPU, e aí vale o aviso de
-sempre ([[Infra e GPU]]).
+`③ RoPE + atenção` · `④ RMSNorm + SwiGLU` · `⑤ lm head — a mesma tabela` (a prévia já roda no
+②) · `⑥ amostragem` · `⑦ loop`. As etapas ③ em diante vão precisar de *forward com captura de
+intermediários* — aí sim o laboratório vai tocar a GPU, e aí vale o aviso de sempre
+([[Infra e GPU]]).
 
 ## Ver também
 

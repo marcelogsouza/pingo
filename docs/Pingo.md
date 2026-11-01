@@ -122,11 +122,11 @@ flowchart LR
 - [[Run do SFT-120M]] — os três runs, a curva do overfit e por que o v2 (1 época) é o que vale
 - [[Avaliação SFT]] — formato, F1, fidelidade, esquecimento catastrófico
 - [[WebUI]] — a tela de chat (Flask + SSE) para testar o modelo com o prompt do treino
-- [[Modo didático]] — o `/lab`: tokenização colorida, ids, bytes e o vetor inicial (passo 1 do curso)
+- [[Modo didático]] — o `/lab`: tokenização colorida, a matriz da frase, a tabela inteira e a lida de volta tied (passos ①–② do curso)
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
-- [[Suíte de testes]] — 141 testes, e o que cada um protege
+- [[Suíte de testes]] — 149 testes, e o que cada um protege
 
 ### 09 — Referência
 - [[Glossário]] — todo jargão que aparece no vault
@@ -171,10 +171,11 @@ flowchart LR
   épocas ia a 6,94×). Números e amostras em [[Run do SFT-120M]].
 - ✅ **WebUI** em Flask para conversar com o modelo (`uv run python scripts/webui.py`, porta
   8010) — [[WebUI]].
-- ✅ **Modo didático** em `/lab` — passo 1 (tokenização + embeddings iniciais) de uma esteira
-  de sete etapas para o curso; nada nele usa GPU — [[Modo didático]].
+- ✅ **Modo didático** em `/lab` — passos ① tokenização e ② embedding (a frase como matriz,
+  as normas da tabela inteira, a lida de volta tied) de uma esteira de sete etapas; nada neles
+  usa GPU — [[Modo didático]].
 - ⬜ Próximo: SFT-5 (instruções gerais/mistura de texto cru, para baixar o esquecimento e
-  ensinar recusa), passos 2–7 do modo didático e Passo 8 (**350M — suspenso**).
+  ensinar recusa), passos ③–⑦ do modo didático e Passo 8 (**350M — suspenso**).
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer
