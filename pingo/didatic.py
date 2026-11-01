@@ -1,8 +1,9 @@
-"""Modo didático (passo 1) — do texto aos ids e ao vetor inicial de cada id.
+"""Modo didático (passos 1–2) — do texto aos ids, ao vetor de cada id e à tabela inteira.
 
 O curso do Pingo precisa mostrar o que o modelo *vê* antes de qualquer conta: o BPE
-byte-level fatiando a frase em pedaços (com o id de cada um) e o vetor que cada id carrega
-na tabela de embeddings — a mesma tabela que mais adiante é o `lm_head` (tied embeddings).
+byte-level fatiando a frase em pedaços (com o id de cada um), o vetor que cada id carrega
+na tabela de embeddings, e a tabela inteira de uma vez — normas, histograma e o produto
+escalar que um `lm_head` tied leria de volta daquele vetor (passo ②).
 
 Duas decisões estruturam o módulo:
 
@@ -32,6 +33,9 @@ MAX_LAB_CHARS = 4_000      # teto do texto que o navegador pode mandar
 MAX_LAB_TOKENS = 512       # teto de chips desenhados (acima disso, avisa e corta)
 VIZINHOS_PADRAO = 8        # k da lista "tokens vizinhos"
 BUSCA_PADRAO = 20          # limites do lookup no vocab
+FAIXA_BINS = 128           # colunas da linha da matriz (896 = 7 × 128; funciona p/ qualquer dim)
+MATRIZ_LINHAS = 96         # teto de linhas da matriz — tela nenhuma lê 500 linhas de uma vez
+LIDA_PADRAO = 8            # k da "tabela lida de volta" (passo ②)
 
 # Nomes que são especiais por construção no projeto (além dos `added_tokens` do backend).
 # No fixture de teste os tokens de chat entram como vocab comum — daí a lista explícita.
@@ -283,6 +287,114 @@ class TabelaEmbeddings:
             "dim_mais_ativa": {"j": maior, "valor": valores[maior]},
             "vizinhos": vizinhos,
         }
+
+    # -- passo ②: a frase como matriz, a tabela inteira, e a tabela lida de volta --
+
+    def faixa(self, tok_id: int, bins: int = FAIXA_BINS) -> list[float]:
+        """O vetor resumido a `bins` valores — a linha desenhada da matriz.
+
+        Sobrevive em cada grupo o valor de **maior módulo**, não a média: o ponto da
+        matriz são os picos; a média os apagaria e toda linha sairia cinza. (Em 896 os
+        grupos de 7 dividem exato, mas o código vale para qualquer `dim`.)
+        """
+        v = self.pesos[tok_id]
+        n = int(v.numel())
+        b = max(1, min(int(bins), n))
+        bordas = [i * n // b for i in range(b + 1)]
+        saida = []
+        for i in range(b):
+            pedaco = v[bordas[i]:bordas[i + 1]]
+            j = int(pedaco.abs().argmax())
+            saida.append(round(float(pedaco[j]), 4))
+        return saida
+
+    def matriz(self, ids: list[int], bins: int = FAIXA_BINS) -> dict[str, Any]:
+        """A frase como matriz de números: uma linha por token — a imagem central do ②.
+
+        As linhas param em `MATRIZ_LINHAS` (`cortado_em` avisa com o total real): um
+        prompt de laboratório tem ~40 tokens, e o aluno não leria 500 linhas de cores.
+        """
+        b = max(1, min(int(bins), int(self.pesos.shape[1])))
+        linhas = []
+        for tok_id in ids[:MATRIZ_LINHAS]:
+            if not 0 <= tok_id < self.pesos.shape[0]:
+                raise IndexError(f"id {tok_id} fora do vocab (0..{self.pesos.shape[0] - 1})")
+            v = self.pesos[tok_id]
+            linhas.append({"id": int(tok_id), "token": self.token(int(tok_id)),
+                           "texto": texto_legivel(self.token(int(tok_id))),
+                           "norma": round(float(self.normas[tok_id]), 3),
+                           "std": round(float(v.std()), 5),
+                           "faixa": self.faixa(tok_id, b)})
+        return {"dim": int(self.pesos.shape[1]), "bins": b,
+                "escala": round(float(self.pesos.abs().max()), 4),
+                "cortado_em": len(ids) if len(ids) > MATRIZ_LINHAS else None,
+                "linhas": linhas}
+
+    def estatisticas(self, bins: int = 48, extremos: int = 6) -> dict[str, Any]:
+        """A tabela inteira de uma vez: a distribuição das normas e seus extremos.
+
+        O histograma mostra que norma é tudo, menos uniforme; os extremos dão nome aos
+        números (o byte raro de maior norma, o token de chat mal treinado de menor).
+        """
+        n = self.normas
+        maior = float(n.max())
+        hist = torch.histc(n, bins=bins, min=0.0, max=maior)
+        bordas = torch.linspace(0.0, maior, bins + 1)
+
+        def quem(i: int) -> dict[str, Any]:
+            return {"id": int(i), "token": self.token(int(i)),
+                    "texto": texto_legivel(self.token(int(i))),
+                    "norma": round(float(n[int(i)]), 3)}
+
+        k = max(1, min(int(extremos), int(n.numel())))
+        topo = torch.topk(n, k)
+        base = torch.topk(n, k, largest=False)
+        return {
+            "vocab": int(n.numel()), "dim": int(self.pesos.shape[1]),
+            "norma": {"media": round(float(n.mean()), 4),
+                      "mediana": round(float(torch.quantile(n, 0.5)), 4),
+                      "min": round(float(n.min()), 4), "max": round(maior, 4),
+                      "std": round(float(n.std()), 4)},
+            "histograma": [{"desde": round(float(bordas[i]), 3),
+                            "ate": round(float(bordas[i + 1]), 3), "cont": int(hist[i])}
+                           for i in range(bins)],
+            "maiores": [quem(int(i)) for i in topo.indices.tolist()],
+            "menores": [quem(int(i)) for i in base.indices.tolist()],
+            "norma_vetor_medio": round(float(self.pesos.mean(dim=0).norm()), 4),
+        }
+
+    def lida_de_volta(self, tok_id: int, k: int = LIDA_PADRAO) -> dict[str, Any]:
+        """O que um `lm_head` tied leria deste vetor: nota = W·v para o vocab inteiro.
+
+        Os logits *reais* só nascem depois das 12 camadas (passo ⑤) — aqui é o vetor
+        **inicial** multiplicado pela própria tabela, e serve para uma lição que a tela
+        mostra sozinha: a nota do lm_head é produto escalar, **inclui a norma** do
+        vizinho; o cosseno é só direção. As duas listas vêm ordenadas de forma
+        diferente — é exatamente essa a diferença que o aluno precisa ver.
+        """
+        if not 0 <= tok_id < self.pesos.shape[0]:
+            raise IndexError(f"id {tok_id} fora do vocab (0..{self.pesos.shape[0] - 1})")
+        k = max(1, min(int(k), 50))
+        logits = self.pesos @ self.pesos[tok_id]     # [V] — a nota antes de qualquer softmax
+        sims = self.unit @ self.unit[tok_id]         # cosseno com todo o vocab
+
+        def quem(i: int) -> dict[str, Any]:
+            return {"id": int(i), "token": self.token(int(i)),
+                    "texto": texto_legivel(self.token(int(i))),
+                    "pontos": round(float(logits[int(i)]), 4),
+                    "cos": round(float(sims[int(i)]), 4),
+                    "norma": round(float(self.normas[int(i)]), 3)}
+
+        top_dot = torch.topk(logits, min(k, logits.numel()))
+        por_pontos = [quem(int(j)) for j in top_dot.indices.tolist()]
+        top_cos = torch.topk(sims, min(k + 1, sims.numel()))
+        por_cos = [quem(int(j)) for _, j in zip(top_cos.values.tolist(), top_cos.indices.tolist())
+                   if int(j) != tok_id][:k]
+        return {"id": int(tok_id), "token": self.token(int(tok_id)),
+                "texto": texto_legivel(self.token(int(tok_id))),
+                "norma": round(float(self.normas[tok_id]), 4),
+                "pontos_consigo": round(float(logits[tok_id]), 4),
+                "por_pontos": por_pontos, "por_cos": por_cos}
 
 
 # ------------------------------------------------------------------ busca no vocab

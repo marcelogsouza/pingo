@@ -302,6 +302,57 @@ def test_lab_embedding_valida_o_id(ambiente):
     assert cliente.get("/api/lab/embedding?modelo=ninguem&id=1").status_code == 400
 
 
+def test_lab_matriz_e_uma_linha_por_token_sem_carregar_o_modelo(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.post("/api/lab/matriz", json={"modelo": "sft", "ids": [4, 9, 10, 9]})
+    assert r.status_code == 200
+    m = r.get_json()
+    assert m["dim"] == 16 and len(m["linhas"]) == 4
+    assert [l["id"] for l in m["linhas"]] == [4, 9, 10, 9]      # a ordem da frase, com repetição
+    assert all(len(l["faixa"]) == 16 for l in m["linhas"])      # bins=min(128, dim)=dim aqui
+    assert m["linhas"][0]["token"] == "<|user|>"
+    assert servidor._loaded is None                             # continua sem modelo na memória
+    assert not servidor.gen_lock.locked()
+
+
+def test_lab_matriz_rejeita_ids_ruins_e_capta_a_frase_gigante(ambiente):
+    cliente, _ = ambiente
+    assert cliente.post("/api/lab/matriz", json={"modelo": "sft"}).status_code == 400
+    assert cliente.post("/api/lab/matriz", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/matriz",
+                        json={"modelo": "sft", "ids": ["olá"]}).status_code == 400
+    r = cliente.post("/api/lab/matriz", json={"modelo": "sft", "ids": [999]})
+    assert r.status_code == 400 and "fora do vocab" in r.get_json()["erro"]
+    d = cliente.post("/api/lab/matriz",
+                     json={"modelo": "sft", "ids": [9] * 700}).get_json()
+    assert len(d["linhas"]) == 96 and d["cortado_em"] == 512   # teto de ids, depois teto de linhas
+
+
+def test_lab_stats_mostra_a_tabela_inteira(ambiente):
+    cliente, servidor = ambiente
+    s = cliente.get("/api/lab/stats?modelo=sft").get_json()
+    assert (s["vocab"], s["dim"]) == (len(VOCAB), 16)
+    assert sum(b["cont"] for b in s["histograma"]) == len(VOCAB)
+    assert s["maiores"][0]["norma"] >= s["menores"][0]["norma"]
+    assert servidor._loaded is None and not servidor.gen_lock.locked()
+    assert cliente.get("/api/lab/stats?modelo=ninguem").status_code == 400
+
+
+def test_lab_lida_de_volta_traz_nota_e_cosseno(ambiente):
+    cliente, servidor = ambiente
+    d = cliente.get("/api/lab/lida?modelo=sft&id=9").get_json()
+    assert d["id"] == 9 and d["token"] == "oi"
+    assert len(d["por_pontos"]) == 8 and len(d["por_cos"]) == 8
+    assert [x["pontos"] for x in d["por_pontos"]] == sorted((x["pontos"] for x in d["por_pontos"]),
+                                                            reverse=True)
+    assert 9 not in [x["id"] for x in d["por_cos"]]
+    tabela = servidor.tabela_de("sft")
+    esperado = tabela.pesos @ tabela.pesos[9]
+    assert d["pontos_consigo"] == pytest.approx(float(esperado[9]), abs=1e-4)
+    assert cliente.get("/api/lab/lida?modelo=sft&id=999").status_code == 400
+    assert cliente.get("/api/lab/lida?modelo=sft").status_code == 400
+
+
 def test_lab_lookup_por_id_e_por_palavra(ambiente):
     cliente, _ = ambiente
     por_id = cliente.get("/api/lab/lookup?modelo=sft&q=9").get_json()["achados"]
@@ -328,6 +379,7 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     corpo = cliente.get("/lab").get_data(as_text=True)
     assert cliente.get("/lab").status_code == 200
     assert "tokenização" in corpo and "/api/lab/tokenize" in corpo and "em breve" in corpo
+    assert "/api/lab/matriz" in corpo and "/api/lab/stats" in corpo and "/api/lab/lida" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 

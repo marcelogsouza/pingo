@@ -12,10 +12,12 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
   Pergunta: …<|assistant|>`, parando no `<|end|>`. Sem contexto, só `Pergunta: …`.
 - **Uma geração por vez**: um `threading.Lock` não bloqueante devolve 429 se você mandar
   outra pergunta enquanto o modelo está no meio de uma resposta.
-- **Modo didático em `/lab`** (o passo 1 do curso): o prompt vira tokens coloridos com os
-  ids, a superfície byte-level e o vetor inicial de cada id — lógica em `pingo.didatic`,
-  que lê a tabela de embeddings do `.safetensors` na CPU. O lab não toca na GPU nem no lock
-  de geração: dá para abrir o laboratório enquanto uma resposta é gerada no chat.
+- **Modo didático em `/lab`** (o curso, passo a passo): o prompt vira tokens coloridos com
+  os ids, a superfície byte-level e o vetor inicial de cada id (passo ①), e a frase vira uma
+  **matriz desenhada** com as estatísticas da tabela inteira e a "lida de volta" tied (passo
+  ②) — lógica em `pingo.didatic`, que lê a tabela de embeddings do `.safetensors` na CPU. O
+  lab não toca na GPU nem no lock de geração: dá para abrir o laboratório enquanto uma
+  resposta é gerada no chat.
 
 Uso:
   uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
@@ -48,8 +50,8 @@ from tokenizers import Tokenizer
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pingo.didatic import (MAX_LAB_CHARS, TabelaEmbeddings, VIZINHOS_PADRAO,  # noqa: E402
-                           buscar, tokenizar)
+from pingo.didatic import (LIDA_PADRAO, MAX_LAB_CHARS, MAX_LAB_TOKENS,  # noqa: E402
+                           TabelaEmbeddings, VIZINHOS_PADRAO, buscar, tokenizar)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
@@ -364,6 +366,59 @@ def create_app(server: Server | None = None) -> Flask:
         except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
         return jsonify(ficha)
+
+    # -- passo ②: a frase como matriz, a tabela inteira, e a tabela lida de volta --
+
+    @app.post("/api/lab/matriz")
+    def lab_matriz():
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in dados.get("ids") or []][:MAX_LAB_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        try:
+            saida = srv.tabela_de(model_id).matriz(ids)
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        saida["modelo"] = model_id
+        return jsonify(saida)
+
+    @app.get("/api/lab/stats")
+    def lab_stats():
+        srv: Server = app.config["PINGO"]
+        model_id, erro, status = _modelo_pedido(srv, request.args)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            saida = srv.tabela_de(model_id).estatisticas()
+        except (KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        saida["modelo"] = model_id
+        return jsonify(saida)
+
+    @app.get("/api/lab/lida")
+    def lab_lida():
+        srv: Server = app.config["PINGO"]
+        model_id, erro, status = _modelo_pedido(srv, request.args)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            tok_id = int(request.args.get("id", ""))
+        except ValueError:
+            return jsonify({"erro": "falta o id do token (inteiro)"}), 400
+        k = int(_num(request.args, "k", LIDA_PADRAO, 1, 50, inteiro=True))
+        try:
+            saida = srv.tabela_de(model_id).lida_de_volta(tok_id, k=k)
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        saida["modelo"] = model_id
+        return jsonify(saida)
 
     @app.get("/api/lab/lookup")
     def lab_lookup():

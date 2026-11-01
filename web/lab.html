@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pingo — laboratório · 1. tokenização</title>
+<title>Pingo — laboratório · tokenização e embeddings</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔬</text></svg>">
 <style>
   :root{
@@ -139,6 +139,24 @@
   .vz .bar i{display:block;height:100%;border-radius:6px;
     background:linear-gradient(90deg,#2f6ad0,var(--green));transition:width .5s ease}
   .vz .c{font:12px var(--mono);color:var(--muted)}
+  /* passo ②: a frase como matriz, histograma da tabela, a lida de volta */
+  .step.on{cursor:pointer}
+  .step.on.atual{box-shadow:0 6px 20px rgba(59,123,251,.13),inset 0 0 0 1px #2b4d8f}
+  .mrow{display:grid;grid-template-columns:minmax(96px,150px) 1fr 58px;gap:12px;align-items:center;
+    padding:3px 6px;border-radius:9px;cursor:pointer}
+  .mrow:hover{background:var(--bg2)}
+  .mlab{font:12.5px var(--mono);color:var(--text);white-space:pre;overflow:hidden;
+    text-overflow:ellipsis}
+  .mlab i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px}
+  canvas.mstrip{width:100%;height:18px;border-radius:5px;background:#0e1117}
+  .mnum{font:11.5px var(--mono);color:var(--muted);text-align:right}
+  canvas.histo{width:100%;height:132px;border-radius:8px;background:#0e1117;margin-top:12px}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px}
+  @media(max-width:760px){.duo{grid-template-columns:1fr}}
+  .mchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .mchip{font:12.5px var(--mono);color:var(--text);background:var(--bg2);border:1px solid var(--line);
+    border-left:3px solid var(--c,#5b93ff);border-radius:7px;padding:4px 9px;cursor:pointer}
+  .mchip.on{background:var(--accent-dim);border-color:#2b4d8f;box-shadow:inset 0 0 0 1px #2b4d8f}
   .tit{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);
     margin:14px 0 8px}
   /* busca */
@@ -198,6 +216,7 @@
     <div class="avisos" id="avisos"></div>
   </section>
 
+  <div id="p1">
   <section class="card">
     <h2>Os tokens, na ordem</h2>
     <p class="hint">Clique (ou navegue com <kbd>Tab</kbd> + <kbd>Enter</kbd>) para abrir a ficha:
@@ -217,9 +236,58 @@
     </div>
     <div class="res" id="res"></div>
   </section>
+  </div>
 
-  <p class="rodape">tokenização por <code>pingo/didatic.py</code> · BPE byte-level de
-    <span id="vocab">16.000</span> pedaços · nada disto usa a GPU</p>
+  <div id="p2" hidden>
+  <section class="card">
+    <h2>2 · A frase vira uma matriz de números</h2>
+    <p class="hint">Cada token virou <b>um vetor de <span id="mdim">896</span> números</b> —
+      cada linha abaixo é um token: à esquerda o pedaço de texto (com a cor da categoria), no
+      meio o vetor desenhado (cada pingo é o <b>maior valor</b> de um grupo de dimensões —
+      <b>azul</b> positivo, <b>laranja</b> negativo, na mesma escala da ficha), à direita a
+      norma ‖e‖. Clique numa linha para abrir a ficha. É essa matriz — não letras — que entra
+      na 1ª camada.</p>
+    <div id="matriz"></div>
+    <div class="hint2" id="mhint"></div>
+  </section>
+
+  <section class="card">
+    <h2>A tabela inteira — <span id="svocab">16.387</span> vetores guardados no checkpoint</h2>
+    <p class="hint">O <i>embedding</i> é um lookup banal: o id é só o <b>número da linha</b>
+      desta tabela. É a mesma matriz do <code>lm_head</code> (tied) — o resto do modelo é que
+      faz conta. A barra abaixo é a norma ‖e‖ de cada vetor da tabela; a distribuição não é
+      nada uniforme, e os extremos têm nome.</p>
+    <div class="medidor" id="snum"></div>
+    <canvas class="histo" id="hist"></canvas>
+    <div class="escala"><span id="hleft">‖e‖ 0</span><span id="hlectura">passe o mouse</span>
+      <span id="hright">+</span></div>
+    <div class="duo">
+      <div><div class="tit">os vetores mais longos</div><div class="vizinhos" id="stop"></div></div>
+      <div><div class="tit">os mais curtos</div><div class="vizinhos" id="sbaixo"></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>A mesma tabela lida de volta — por que o <code>lm_head</code> é ela mesma</h2>
+    <p class="hint">Multiplique o vetor de um token pela tabela inteira e cada token do vocab
+      recebe uma <b>nota</b> (produto escalar). É exatamente o que o <code>lm_head</code> faz
+      — só que com o vetor <i>depois</i> das 12 camadas (passo ⑤); aqui é o vetor
+      <i>inicial</i>, e a tela deixa comparar as duas ordenações: a nota <b>inclui a norma</b>
+      do vizinho, o cosseno é só a direção. Escolha o token:</p>
+    <div class="mchips" id="lidachips"></div>
+    <div class="duo">
+      <div><div class="tit">nota do lm_head (v·w) — inclui a norma</div>
+        <div class="vizinhos" id="lidadot"></div></div>
+      <div><div class="tit">cosseno — só a direção</div>
+        <div class="vizinhos" id="lidacos"></div></div>
+    </div>
+    <div class="hint2" id="lidanota"></div>
+  </section>
+  </div>
+
+  <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
+    de <span id="vocab">16.000</span> pedaços · tabela lida direto do <code>.safetensors</code> —
+    nada disto usa a GPU</p>
 </div>
 
 <div id="ficha">
@@ -251,7 +319,7 @@ const CAT = {
   'continuação': '#f2a65a',
 };
 const PASSOS = [
-  ['tokenização', true], ['embedding (896)', false], ['RoPE + atenção', false],
+  ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', false],
   ['RMSNorm + SwiGLU', false], ['lm head — a mesma tabela!', false],
   ['amostragem', false], ['loop: o token volta', false],
 ];
@@ -260,24 +328,35 @@ const EXEMPLOS = [
   "Olá, São João — não é o são João.",
   "O preço foi R$ 1.234,56 (≈ 3% do PIB).",
 ];
-const state = {modelos: [], modelo: null, filtro: null, chat: true,
-               tokens: [], resumo: null, prompt: '', sel: null};
+const state = {modelos: [], modelo: null, filtro: null, chat: true, passo: 1,
+               tokens: [], resumo: null, prompt: '', sel: null, lidaTok: null};
 
 const fmt = n => n.toLocaleString('pt-BR');
+const dec = x => String(x).replace('.', ',');
+const escH = s => String(s).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
 const visivel = t => t.replace(/ /g, '␣').replace(/\n/g, '⏎').replace(/\t/g, '⇥');
 function erro(msg){ const e = $('#erro'); e.textContent = '⚠ ' + msg; e.classList.add('on'); }
 function limpaErro(){ $('#erro').classList.remove('on'); }
 
-/* ---------------------------------------------------------------- passos */
+/* ---------------------------------------------------------------- passos (abas) */
 function montarPassos(){
   $('#steps').innerHTML = '';
   PASSOS.forEach(([rotulo, ativo], i) => {
     const el = document.createElement('div');
-    el.className = 'step ' + (ativo ? 'on' : 'off');
+    el.className = 'step ' + (ativo ? 'on' : 'off') + (i + 1 === state.passo ? ' atual' : '');
     el.innerHTML = `<b>${i + 1}</b>${rotulo}`;
-    if (!ativo) el.title = 'ainda em construção — é o próximo passo do curso';
+    if (ativo){ el.onclick = () => irPara(i + 1); el.title = 'ir para esta etapa'; }
+    else el.title = 'ainda em construção — é o próximo passo do curso';
     $('#steps').appendChild(el);
   });
+}
+
+function irPara(n){
+  state.passo = n;
+  $('#p1').hidden = n !== 1;
+  $('#p2').hidden = n !== 2;
+  [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
+  if (n === 2) desenharPasso2();
 }
 
 /* ---------------------------------------------------------------- modelos */
@@ -335,6 +414,8 @@ function desenharTudo(dados){
   desenharTokens();
   desenharAvisos(dados, s);
   aplicarFiltro();
+  state.lidaTok = null;
+  if (state.passo === 2) desenharPasso2();
 }
 
 function desenharMedidor(dados, s){
@@ -416,6 +497,206 @@ function desenharAvisos(dados, s){
     add('O <b>base</b> não conhece tokens de chat: o vocab dele (16.384) não tem '
       + '<code>&lt;|user|&gt;</code>, então ele recebe o texto puro e só continua o que veio.');
 }
+/* ---------------------------------------------------------- passo ② · embedding */
+const cacheMatriz = new Map();
+const cacheLida = new Map();
+let cacheStats = null;              // {chave, dados} — a tabela é uma por modelo
+
+async function desenharPasso2(){
+  if (!state.tokens.length) return;
+  await desenharMatriz();
+  await desenharStats();
+  await desenharLida();
+}
+
+async function desenharMatriz(){
+  const ids = state.tokens.map(t => t.id);
+  const chave = state.modelo + ':' + ids.join(',');
+  let m = cacheMatriz.get(chave);
+  if (!m){
+    let r;
+    try {
+      r = await fetch('/api/lab/matriz', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({modelo: state.modelo, ids})});
+    } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+    m = await r.json();
+    if (!r.ok){ erro(m.erro || `HTTP ${r.status}`); return; }
+    cacheMatriz.set(chave, m);
+  }
+  limpaErro();
+  $('#mdim').textContent = fmt(m.dim);
+  const box = $('#matriz'); box.innerHTML = '';
+  m.linhas.forEach((l, i) => {
+    const row = linhaMatriz(l, m, state.tokens[i]);
+    box.appendChild(row);
+    pintarFaixa(row.querySelector('canvas.mstrip'), l.faixa, m.escala);
+  });
+  $('#mhint').textContent = m.cortado_em
+    ? `a frase tem ${fmt(m.cortado_em)} tokens; desenho as ${m.linhas.length} primeiras linhas`
+    : `${m.linhas.length} linhas × ${fmt(m.dim)} colunas — a matriz exata que entra na camada 1`;
+}
+
+function linhaMatriz(l, m, tok){
+  const row = document.createElement('div'); row.className = 'mrow';
+  const lab = document.createElement('span'); lab.className = 'mlab';
+  const bolinha = document.createElement('i');
+  bolinha.style.background = CAT[(tok && tok.kind) || ''] || '#5b93ff';
+  lab.append(bolinha, document.createTextNode(visivel(l.texto || l.token)));
+  const cv = document.createElement('canvas'); cv.className = 'mstrip';
+  const num = document.createElement('span'); num.className = 'mnum';
+  num.textContent = dec(l.norma);
+  row.append(lab, cv, num);
+  row.title = `id ${l.id} · ${l.token} · ‖e‖ ${dec(l.norma)} — clique para a ficha`;
+  row.onclick = () => abrirFichaId(l.id, tok);
+  return row;
+}
+
+function pintarFaixa(cv, faixa, escala){
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const largura = cv.clientWidth || 420;
+  cv.width = Math.round(largura * dpr); cv.height = Math.round(18 * dpr);
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const meio = H / 2, passo = W / faixa.length, e = escala || 0.25;
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, W, H);
+  faixa.forEach((v, j) => {
+    const h = Math.max(0.8 * dpr, Math.min(meio - dpr, (Math.abs(v) / e) * (meio - dpr)));
+    ctx.fillStyle = v >= 0 ? '#5b93ff' : '#ff9f6b';
+    ctx.fillRect(j * passo + passo * 0.1, v >= 0 ? meio - h : meio,
+                 Math.max(passo * 0.8, dpr), h);
+  });
+}
+
+async function desenharStats(){
+  if (!cacheStats || cacheStats.chave !== state.modelo){
+    let r;
+    try { r = await fetch(`/api/lab/stats?modelo=${encodeURIComponent(state.modelo)}`); }
+    catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+    const d = await r.json();
+    if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+    cacheStats = {chave: state.modelo, dados: d};
+  }
+  limpaErro();
+  const s = cacheStats.dados, n = s.norma;
+  $('#svocab').textContent = fmt(s.vocab);
+  $('#snum').innerHTML = `<span><b>${fmt(s.vocab)}</b> vetores</span>
+    <span>× <b>${s.dim}</b> dimensões</span>
+    <span>norma média <em>${dec(n.media)}</em></span>
+    <span>mediana <em>${dec(n.mediana)}</em></span>
+    <span>σ <em>${dec(n.std)}</em></span>
+    <span>·</span><span>vetor médio da tabela: ‖·‖ <em>${dec(s.norma_vetor_medio)}</em></span>`;
+  desenharHist(s);
+  desenharExtremos('#stop', s.maiores);
+  desenharExtremos('#sbaixo', s.menores);
+}
+
+function desenharHist(s){
+  const cv = $('#hist'), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const largura = cv.clientWidth || 880;
+  cv.width = Math.round(largura * dpr); cv.height = Math.round(132 * dpr);
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const bins = s.histograma, mx = Math.max(...bins.map(b => b.cont), 1);
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, W, H);
+  bins.forEach((b, i) => {
+    const x = i * W / bins.length, h = (b.cont / mx) * (H - 10 * dpr);
+    ctx.fillStyle = '#5b93ff';
+    ctx.fillRect(x + dpr, H - 2 * dpr - h, W / bins.length - 2 * dpr, h);
+  });
+  const xmed = s.norma.media / s.norma.max * W;
+  ctx.strokeStyle = '#ffd166'; ctx.lineWidth = dpr; ctx.setLineDash([4 * dpr, 3 * dpr]);
+  ctx.beginPath(); ctx.moveTo(xmed, 0); ctx.lineTo(xmed, H); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#ffd166'; ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+  ctx.fillText('média ' + dec(s.norma.media), Math.min(xmed + 4 * dpr, W - 110 * dpr), 12 * dpr);
+  $('#hleft').textContent = '‖e‖ ' + dec(s.norma.min);
+  $('#hright').textContent = '‖e‖ ' + dec(s.norma.max);
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const i = Math.max(0, Math.min(bins.length - 1,
+      Math.floor((ev.clientX - rect.left) / rect.width * bins.length)));
+    $('#hlectura').textContent = `entre ${dec(bins[i].desde)} e ${dec(bins[i].ate)}: `
+      + `${fmt(bins[i].cont)} tokens`;
+  };
+  cv.onmouseleave = () => { $('#hlectura').textContent = 'passe o mouse sobre o histograma'; };
+  cv.onmouseleave();
+}
+
+function desenharExtremos(sel, lista){
+  const box = $(sel); box.innerHTML = '';
+  const mx = Math.max(...lista.map(x => x.norma), 0.01);
+  for (const x of lista){
+    const linha = document.createElement('div'); linha.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = visivel(x.texto || x.token);
+    t.title = `${x.token} · id ${x.id} — clique para a ficha`;
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (x.norma / mx * 100).toFixed(1) + '%';
+    barra.appendChild(ench);
+    const c = document.createElement('div'); c.className = 'c'; c.textContent = dec(x.norma);
+    linha.append(t, barra, c);
+    linha.onclick = () => abrirFichaId(x.id, null);
+    linha.style.cursor = 'pointer';
+    box.appendChild(linha);
+  }
+}
+
+async function desenharLida(){
+  if (state.lidaTok && !state.tokens.includes(state.lidaTok)) state.lidaTok = null;
+  if (!state.lidaTok)
+    state.lidaTok = state.tokens.find(t => t.kind !== 'especial') || state.tokens[0] || null;
+  const t = state.lidaTok; if (!t) return;
+  const chipBox = $('#lidachips'); chipBox.innerHTML = '';
+  state.tokens.forEach((tk) => {
+    const b = document.createElement('button');
+    b.className = 'mchip' + (tk === state.lidaTok ? ' on' : '');
+    b.style.setProperty('--c', CAT[tk.kind] || '#5b93ff');
+    b.textContent = visivel(tk.texto || tk.superficie);
+    b.onclick = () => { state.lidaTok = tk; desenharLida(); };
+    chipBox.appendChild(b);
+  });
+  const chave = state.modelo + ':' + t.id;
+  let d = cacheLida.get(chave);
+  if (!d){
+    let r;
+    try {
+      r = await fetch(`/api/lab/lida?modelo=${encodeURIComponent(state.modelo)}&id=${t.id}`);
+    } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+    d = await r.json();
+    if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+    cacheLida.set(chave, d);
+  }
+  limpaErro();
+  barrasLida($('#lidadot'), d.por_pontos, 'pontos');
+  barrasLida($('#lidacos'), d.por_cos, 'cos');
+  $('#lidanota').innerHTML = `lendo o vetor inicial de <b>${escH(visivel(d.texto || d.token))}</b> `
+    + `(id ${d.id}, ‖e‖ ${dec(d.norma)}; nota contra si mesmo: ${dec(d.pontos_consigo)}). `
+    + 'Repare que as duas listas têm <b>ordens diferentes</b>: a nota do lm_head cresce com a '
+    + '<b>norma</b> do vizinho, o cosseno não liga para ela. <i>Aqui é o vetor antes das '
+    + 'camadas — os logits de verdade chegam no passo ⑤.</i>';
+}
+
+function barrasLida(box, lista, campo){
+  box.innerHTML = '';
+  const mx = Math.max(...lista.map(x => Math.abs(x[campo])), 0.01);
+  for (const x of lista){
+    const linha = document.createElement('div'); linha.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = visivel(x.texto || x.token);
+    t.title = `${x.token} · id ${x.id} · ‖e‖ ${dec(x.norma)} · `
+      + `cosseno ${dec(x.cos)} · nota ${dec(x.pontos)} — clique para a ficha`;
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (Math.abs(x[campo]) / mx * 100).toFixed(1) + '%';
+    if (x[campo] < 0) ench.style.background = '#ff9f6b';
+    barra.appendChild(ench);
+    const c = document.createElement('div'); c.className = 'c'; c.textContent = dec(x[campo]);
+    linha.append(t, barra, c);
+    linha.onclick = () => abrirFichaId(x.id, null);
+    linha.style.cursor = 'pointer';
+    box.appendChild(linha);
+  }
+}
+
 /* ---------------------------------------------------------------- ficha */
 const cacheFicha = new Map();
 

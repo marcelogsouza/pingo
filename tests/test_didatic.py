@@ -159,6 +159,67 @@ def test_ficha_fora_do_vocab_e_erro_claro(tmp_path):
         tabela.ficha(999)
 
 
+# ------------------------------------------------------------------ passo ②
+
+
+def test_faixa_resume_o_vetor_preservando_os_picos(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path))
+    f = tabela.faixa(9, bins=4)                       # dim 16 → grupos de 4
+    v = tabela.pesos[9]
+    assert len(f) == 4
+    for i, valor in enumerate(f):
+        grupo = v[i * 4:(i + 1) * 4]
+        esperado = float(grupo[grupo.abs().argmax()])
+        assert valor == pytest.approx(esperado, abs=1e-4)
+
+
+def test_matriz_da_frase_linha_por_token_e_corte_honesto(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    m = tabela.matriz([4, 9, 10, 9], bins=4)
+    assert m["dim"] == 16 and m["bins"] == 4 and m["cortado_em"] is None
+    assert [l["id"] for l in m["linhas"]] == [4, 9, 10, 9]
+    assert [l["token"] for l in m["linhas"]] == ["<|user|>", "oi", "mundo", "oi"]
+    assert all(len(l["faixa"]) == 4 for l in m["linhas"])
+    assert m["linhas"][1]["norma"] == pytest.approx(float(tabela.pesos[9].norm()), abs=5e-4)
+    cheio = tabela.matriz([9] * (96 + 24), bins=4)
+    assert len(cheio["linhas"]) == 96 and cheio["cortado_em"] == 120
+    with pytest.raises(IndexError):
+        tabela.matriz([9, 999])
+
+
+def test_estatisticas_histograma_soma_o_vocab_e_os_extremos_tem_nome(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    s = tabela.estatisticas(bins=5, extremos=3)
+    assert (s["vocab"], s["dim"]) == (len(VOCAB), 16)
+    assert sum(b["cont"] for b in s["histograma"]) == len(VOCAB)
+    assert len(s["histograma"]) == 5
+    n = tabela.normas
+    assert s["norma"]["media"] == pytest.approx(float(n.mean()), abs=1e-3)
+    assert s["norma"]["mediana"] == pytest.approx(float(torch.quantile(n, 0.5)), abs=1e-3)
+    assert [x["norma"] for x in s["maiores"]] == sorted([x["norma"] for x in s["maiores"]],
+                                                        reverse=True)
+    assert s["maiores"][0]["norma"] == pytest.approx(float(n.max()), abs=1e-3)
+    assert s["menores"][0]["norma"] == pytest.approx(float(n.min()), abs=1e-3)
+    assert s["menores"][0]["token"] in tabela.id_para_token.values()
+
+
+def test_lida_de_volta_a_nota_do_lm_head_e_produto_escalar_com_a_tabela(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    d = tabela.lida_de_volta(9, k=5)
+    esperado = tabela.pesos @ tabela.pesos[9]
+    assert d["id"] == 9 and d["token"] == "oi"
+    assert d["pontos_consigo"] == pytest.approx(float(esperado[9]), abs=1e-4)
+    assert [x["pontos"] for x in d["por_pontos"]] == sorted((x["pontos"] for x in d["por_pontos"]),
+                                                            reverse=True)
+    assert [x["pontos"] for x in d["por_pontos"]] == [round(float(v), 4) for v in
+                                                      esperado.topk(5).values.tolist()]
+    assert 9 not in [x["id"] for x in d["por_cos"]]   # de novo: ninguém é vizinho de si
+    assert [x["cos"] for x in d["por_cos"]] == sorted((x["cos"] for x in d["por_cos"]),
+                                                      reverse=True)
+    with pytest.raises(IndexError):
+        tabela.lida_de_volta(999)
+
+
 # ------------------------------------------------------------------ busca
 
 
