@@ -403,6 +403,59 @@ def test_lab_attn_valida_entradas_e_responde_429(ambiente):
     assert d["n"] == 64                            # teto de 64 tokens na captura
 
 
+# ---------------------------------------------------------------- passo ④ · RMSNorm + SwiGLU
+
+
+def test_lab_bloco_regua_gamma_e_swinglu(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                             "camada": 0, "i": 1})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["modelo"] == "sft" and d["camada"] == 0 and d["n_camadas"] == 1
+    assert (d["n"], d["d"], d["hidden"]) == (4, 16, 32)
+    assert d["raiz_d"] == pytest.approx(16 ** 0.5, abs=0.01)
+    assert [l["id"] for l in d["tokens"]] == [4, 9, 10, 5]
+    assert d["tokens"][1]["token"] == "oi"
+    for l in d["tokens"]:
+        assert l["n1p"] == pytest.approx(d["raiz_d"], abs=0.1)   # a régua vale para todos
+    assert len(d["gamma"]["mlp"]["faixa"]) == 16                  # bins=min(128, dim)=dim aqui
+    assert len(d["mlp"]["s"]) == 32 and d["mlp"]["abertas"] >= 1  # faixa do MLP cap no hidden
+    assert servidor._loaded is not None                           # carona do forward do ③
+    assert not servidor.gen_lock.locked()
+
+
+def test_lab_bloco_valida_entradas_e_responde_429(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": ["x"]}).status_code == 400
+    r = cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4, 9], "camada": 7})
+    assert r.status_code == 400 and "camada" in r.get_json()["erro"]
+    r = cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4, 9], "i": 5})
+    assert r.status_code == 400 and "fora da frase" in r.get_json()["erro"]
+    servidor.gen_lock.acquire(blocking=False)
+    try:
+        assert cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4]}).status_code == 429
+    finally:
+        servidor.gen_lock.release()
+    d = cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4] * 700}).get_json()
+    assert d["n"] == 64                                           # mesmo teto de tokens do ③
+
+
+def test_lab_bloco_e_attn_compartilham_a_captura(ambiente):
+    """④ é carona: a captura por `modelo+ids` serve o ③ e o ④ — um forward só."""
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                               "camada": 0}).status_code == 200
+    antes = servidor._captura
+    assert cliente.post("/api/lab/bloco", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                                "camada": 0, "i": 2}).status_code == 200
+    assert servidor._captura is antes
+
+
+# ------------------------------------------------------------------ busca de vocab
+
+
 def test_lab_lookup_por_id_e_por_palavra(ambiente):
     cliente, _ = ambiente
     por_id = cliente.get("/api/lab/lookup?modelo=sft&q=9").get_json()["achados"]
@@ -430,7 +483,7 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     assert cliente.get("/lab").status_code == 200
     assert "tokenização" in corpo and "/api/lab/tokenize" in corpo and "em breve" in corpo
     assert "/api/lab/matriz" in corpo and "/api/lab/stats" in corpo and "/api/lab/lida" in corpo
-    assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo
+    assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo and "/api/lab/bloco" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 

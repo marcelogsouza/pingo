@@ -20,6 +20,7 @@ Tudo aqui é puro e testeiro em CPU: nada importa Flask, nada toca em checkpoint
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,25 @@ def tokenizar(tokenizer, prompt: str, limite: int = MAX_LAB_TOKENS) -> dict[str,
 # ------------------------------------------------------------------ embeddings
 
 
+def faixa_de(v: torch.Tensor, bins: int = FAIXA_BINS) -> list[float]:
+    """O vetor resumido a `bins` valores — a linha desenhada da matriz.
+
+    Sobrevive em cada grupo o valor de **maior módulo**, não a média: o ponto da
+    matriz são os picos; a média os apagaria e toda linha sairia cinza. (Em 896 os
+    grupos de 7 dividem exato, mas o código vale para qualquer `dim`.)
+    """
+    v = v.reshape(-1)
+    n = int(v.numel())
+    b = max(1, min(int(bins), n))
+    bordas = [i * n // b for i in range(b + 1)]
+    saida = []
+    for i in range(b):
+        pedaco = v[bordas[i]:bordas[i + 1]]
+        j = int(pedaco.abs().argmax())
+        saida.append(round(float(pedaco[j]), 4))
+    return saida
+
+
 @dataclass
 class TabelaEmbeddings:
     """A tabela `embed.weight` na CPU + o que a tela precisa dela (normas e cossenos).
@@ -292,22 +312,7 @@ class TabelaEmbeddings:
     # -- passo ②: a frase como matriz, a tabela inteira, e a tabela lida de volta --
 
     def faixa(self, tok_id: int, bins: int = FAIXA_BINS) -> list[float]:
-        """O vetor resumido a `bins` valores — a linha desenhada da matriz.
-
-        Sobrevive em cada grupo o valor de **maior módulo**, não a média: o ponto da
-        matriz são os picos; a média os apagaria e toda linha sairia cinza. (Em 896 os
-        grupos de 7 dividem exato, mas o código vale para qualquer `dim`.)
-        """
-        v = self.pesos[tok_id]
-        n = int(v.numel())
-        b = max(1, min(int(bins), n))
-        bordas = [i * n // b for i in range(b + 1)]
-        saida = []
-        for i in range(b):
-            pedaco = v[bordas[i]:bordas[i + 1]]
-            j = int(pedaco.abs().argmax())
-            saida.append(round(float(pedaco[j]), 4))
-        return saida
+        return faixa_de(self.pesos[tok_id], bins)
 
     def matriz(self, ids: list[int], bins: int = FAIXA_BINS) -> dict[str, Any]:
         """A frase como matriz de números: uma linha por token — a imagem central do ②.
@@ -396,6 +401,60 @@ class TabelaEmbeddings:
                 "norma": round(float(self.normas[tok_id]), 4),
                 "pontos_consigo": round(float(logits[tok_id]), 4),
                 "por_pontos": por_pontos, "por_cos": por_cos}
+
+
+# ------------------------------------------------------------------ bloco (passo ④)
+
+
+def ficha_bloco(camada: dict[str, torch.Tensor], ids: list[int],
+                id_para_token: dict[int, str], i: int,
+                bins: int = FAIXA_BINS) -> dict[str, Any]:
+    """Um bloco inteiro numa ficha (passo ④): o RMSNorm antes/depois e o SwiGLU do token `i`.
+
+    `camada` é o que `Server.captura_atencao` guarda de um bloco: os tensores do `capture`
+    já sem a dimensão B ([T, D] / [T, hidden]) — e mais `g_attn`/`g_mlp`, o γ aprendido das
+    duas normas. A lição por token: ‖x‖ entra torto, o RMSNorm **puro** devolve √d para
+    todos (a régua) e o γ modula dimensão a dimensão; no SwiGLU o gate decide quais das
+    `hidden` portas abrem para o token.
+
+    `abertas` conta a força ≥ 10% da porta mais forte — contar "não-zero" contaria ruído
+    de vírgula flutuante e não ensinaria nada.
+    """
+    x0 = camada["x0"]
+    n, d = int(x0.shape[0]), int(x0.shape[-1])
+    if not 0 <= i < n:
+        raise IndexError(f"token {i} fora da frase (0..{n - 1})")
+    if len(ids) < n:
+        raise IndexError("ids mais curto que a captura")
+
+    nomes = [id_para_token.get(int(t), f"<id {t}>") for t in ids[:n]]
+    col = {k: [round(float(v), 4) for v in camada[k][:n].norm(dim=-1)]
+           for k in ("x0", "n1p", "n1", "a", "x1", "n2p", "n2", "m", "x2")}
+    tokens = [{"i": j, "id": int(ids[j]), "token": nome, "texto": texto_legivel(nome),
+               **{k: col[k][j] for k in col}}
+              for j, nome in enumerate(nomes)]
+
+    def peso_gamma(g: torch.Tensor) -> dict[str, Any]:
+        return {"media": round(float(g.mean()), 4), "min": round(float(g.min()), 4),
+                "max": round(float(g.max()), 4), "std": round(float(g.std()), 4),
+                "faixa": faixa_de(g, bins)}
+
+    g, u, s = camada["g"][i], camada["u"][i], camada["s"][i]
+    smax = float(s.abs().max())
+    maior = int(s.abs().argmax())
+    return {
+        "n": n, "d": d, "hidden": int(s.shape[-1]), "bins": min(int(bins), d),
+        "raiz_d": round(math.sqrt(d), 4), "i": int(i),
+        "tokens": tokens,
+        "gamma": {"attn": peso_gamma(camada["g_attn"]), "mlp": peso_gamma(camada["g_mlp"])},
+        "mlp": {"g": faixa_de(g, bins), "u": faixa_de(u, bins), "s": faixa_de(s, bins),
+                "escala": round(max(float(t.abs().max()) for t in (g, u, s)), 4),
+                "maior": {"j": maior, "valor": round(float(s[maior]), 4)},
+                "abertas": int((s.abs() >= 0.1 * smax).sum()) if smax > 0 else 0,
+                "forca_max": round(smax, 4),
+                "delta": round(float(camada["m"][i].norm()), 4),
+                "residuo": round(float(camada["x1"][i].norm()), 4)},
+    }
 
 
 # ------------------------------------------------------------------ busca no vocab

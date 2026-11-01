@@ -1,11 +1,11 @@
 <!doctype html>
-<!-- Modo didático do Pingo — passo 1: do texto ao id e ao vetor inicial de cada id.
+<!-- Modo didático do Pingo — passos ①–④: do texto ao id, ao vetor, à atenção e ao bloco.
      Servida em /lab pela WebUI (scripts/webui.py); a lógica vem de pingo/didatic.py. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pingo — laboratório · tokenização e embeddings</title>
+<title>Pingo — laboratório · do token ao SwiGLU</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔬</text></svg>">
 <style>
   :root{
@@ -169,6 +169,21 @@
   canvas#matz{max-width:560px;width:100%;aspect-ratio:1/1;background:#0e1117;border-radius:8px}
   .tit{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);
     margin:14px 0 8px}
+  /* passo ④: régua de normas + faixas do SwiGLU */
+  .nrow{display:grid;grid-template-columns:minmax(88px,150px) repeat(4,1fr);gap:10px;
+    align-items:center;padding:3px 6px;border-radius:9px}
+  .nrow:hover{background:var(--bg2)}
+  .nhead{color:var(--dim);font-size:10.5px;letter-spacing:.4px;text-transform:uppercase}
+  .nhead:hover{background:none}
+  .ncell{display:flex;align-items:center;gap:7px;min-width:0}
+  .nbar{flex:1;height:9px;border-radius:6px;background:var(--panel2);overflow:hidden}
+  .nbar i{display:block;height:100%;border-radius:6px;
+    background:linear-gradient(90deg,#2f6ad0,#5b93ff);transition:width .4s ease}
+  .nbar.puro i{background:linear-gradient(90deg,#1f7a4d,var(--green))}
+  .nbar.gam i{background:linear-gradient(90deg,#8a5a2b,var(--amber))}
+  .nbar.del i{background:linear-gradient(90deg,#7a2f5a,var(--rose))}
+  .nnum{font:11px var(--mono);color:var(--muted);min-width:46px;text-align:right}
+  canvas.faixa4{width:100%;height:30px;border-radius:6px;background:#0e1117;margin-top:4px}
   /* busca */
   .busca{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
   .busca input{flex:1;min-width:220px;border:1px solid var(--line2);background:var(--bg2);
@@ -364,9 +379,63 @@
   </section>
   </div>
 
+  <div id="p4" hidden>
+  <section class="card">
+    <h2>4 · RMSNorm + SwiGLU — o resto do bloco</h2>
+    <p class="hint">A atenção (③) é metade do bloco; a outra metade não olha ninguém: o
+      <b>RMSNorm</b> põe cada vetor em tamanho padrão antes de qualquer conta, e o
+      <b>SwiGLU</b> é o MLP que pensa sozinho — <span id="b4hidden2">2.304</span> portas em
+      que o <i>gate</i> decide quais abrem. Os números vêm do <b>mesmo forward real</b> do
+      passo ③ — a captura serve os dois. Escolha a camada e o token.</p>
+    <div class="row">
+      <span class="tit">camada</span><span class="cams" id="camadas4"></span>
+    </div>
+    <div class="mchips" id="toks4"></div>
+    <div class="hint2" id="b4nota"></div>
+  </section>
+
+  <section class="card">
+    <h2>A régua do RMSNorm — todo vetor passa a medir <span id="b4raiz">√d</span></h2>
+    <p class="hint">O fluxo residual cresce torto: no passo ② as normas iam de 0,24 a 1,6 só
+      na tabela de partida. Antes de cada sub-camada o RMSNorm divide cada vetor pela sua
+      própria média quadrática — <b>a norma pura vira √d para todos os tokens</b>, qualquer
+      que seja a entrada (coluna verde: todas do mesmo tamanho) — e aí o <b>γ</b>, aprendido
+      no treino, modula dimensão a dimensão (coluna âmbar). A última coluna é o <i>delta</i>:
+      o que a camada somou ao token (atenção + MLP), quase sempre pequeno — é por isso que o
+      modelo precisa de <b>12 camadas</b> em vez de uma só.</p>
+    <div class="nrow nhead"><span>token</span><span>‖x que entra‖</span>
+      <span>‖RMSNorm puro‖</span><span>‖com γ‖</span><span>Δ da camada</span></div>
+    <div id="b4regua"></div>
+    <div class="tit">γ da <span id="b4gqual">norma do MLP</span> — o valor aprendido de cada
+      uma das <span id="b4gd">896</span> dimensões</div>
+    <div class="mchips" id="b4gsel"></div>
+    <canvas class="faixa4" id="b4gamma"></canvas>
+    <div class="escala"><span id="b4gesq">−</span><span id="b4glegenda"></span>
+      <span id="b4gesd">+</span></div>
+  </section>
+
+  <section class="card">
+    <h2>SwiGLU — <span id="b4hidden">2.304</span> portas, o gate decide quais abrem</h2>
+    <p class="hint"><code>down(silu(gate(x)) · up(x))</code>: o <b>gate</b> é o interruptor
+      (<code>silu</code> amortece os negativos), o <b>up</b> carrega o conteúdo, e o
+      <b>produto</b> é o vetor escondido — mais largo que o modelo inteiro (2.304 × 896). As
+      três faixas estão na <b>mesma escala</b>, uma sobre a outra; é no produto que a
+      esparsidade acontece. O <code>down_proj</code> traz os 2.304 de volta aos 896 e soma no
+      fluxo — é o Δ da régua acima.</p>
+    <div class="tit">gate — silu(gate(x))</div>
+    <canvas class="faixa4" id="b4g"></canvas>
+    <div class="tit">up — up(x)</div>
+    <canvas class="faixa4" id="b4u"></canvas>
+    <div class="tit">produto silu(gate)·up — o vetor escondido</div>
+    <canvas class="faixa4" id="b4s"></canvas>
+    <div class="grade" id="b4kvs"></div>
+    <div class="hint2" id="b4mlpnota"></div>
+  </section>
+  </div>
+
   <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
     de <span id="vocab">16.000</span> pedaços · passos ① e ② leem o <code>.safetensors</code>
-    sem GPU; o passo ③ roda um forward real no device do servidor</p>
+    sem GPU; os passos ③ e ④ rodam um forward real no device do servidor</p>
 </div>
 
 <div id="ficha">
@@ -399,7 +468,7 @@ const CAT = {
 };
 const PASSOS = [
   ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', true],
-  ['RMSNorm + SwiGLU', false], ['lm head — a mesma tabela!', false],
+  ['RMSNorm + SwiGLU', true], ['lm head — a mesma tabela!', false],
   ['amostragem', false], ['loop: o token volta', false],
 ];
 const EXEMPLOS = [
@@ -435,9 +504,11 @@ function irPara(n){
   $('#p1').hidden = n !== 1;
   $('#p2').hidden = n !== 2;
   $('#p3').hidden = n !== 3;
+  $('#p4').hidden = n !== 4;
   [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
   if (n === 2) desenharPasso2();
   if (n === 3) garantirAtencao();
+  if (n === 4) garantirBloco();
 }
 
 /* ---------------------------------------------------------------- modelos */
@@ -498,8 +569,10 @@ function desenharTudo(dados){
   state.lidaTok = null;
   if (p3.tok !== null) p3.tok = null;
   p3.pesos.clear(); p3.rope.clear(); p3.pronto = false;   // o forward velho não vale mais
+  p4.dados = null; p4.tok = null;                        // idem para o passo ④
   if (state.passo === 2) desenharPasso2();
   if (state.passo === 3) garantirAtencao();
+  if (state.passo === 4) garantirBloco();
 }
 
 function desenharMedidor(dados, s){
@@ -636,10 +709,10 @@ function linhaMatriz(l, m, tok){
   return row;
 }
 
-function pintarFaixa(cv, faixa, escala){
+function pintarFaixa(cv, faixa, escala, alt){
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const largura = cv.clientWidth || 420;
-  cv.width = Math.round(largura * dpr); cv.height = Math.round(18 * dpr);
+  cv.width = Math.round(largura * dpr); cv.height = Math.round((alt || 18) * dpr);
   const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
   const meio = H / 2, passo = W / faixa.length, e = escala || 0.25;
   ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, W, H);
@@ -1090,6 +1163,141 @@ function desenharMatriz(){
   };
   $('#matleft').textContent = `camada ${p3.camada + 1} · cabeça ${p3.head + 1}`;
   $('#matright').textContent = `máx ${dec(mx)}`;
+}
+
+/* ------------------------------------------------ passo ④ · RMSNorm + SwiGLU (mesma captura) */
+const p4 = {tok: null, camada: 0, gama: 'mlp', dados: null};
+
+function tokBloco(){
+  if (p4.tok && state.tokens.includes(p4.tok)) return p4.tok;
+  p4.tok = state.tokens.find(t => t.kind !== 'especial') || state.tokens[0] || null;
+  return p4.tok;
+}
+
+async function garantirBloco(){
+  if (!state.tokens.length) return;
+  if (p4.dados && p4.dados.modelo === state.modelo){ desenharPasso4(); return; }
+  await carregarBloco();
+}
+
+async function carregarBloco(){
+  const t = tokBloco(); if (!t) return;
+  let r;
+  try {
+    r = await fetch('/api/lab/bloco', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({modelo: state.modelo, ids: state.tokens.map(x => x.id),
+                            camada: p4.camada, i: t.i})});
+  } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+  const d = await r.json();
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  p4.dados = d;
+  desenharPasso4();
+}
+
+function montarControles4(){
+  const d = p4.dados;
+  const cc = $('#camadas4'); cc.innerHTML = '';
+  for (let i = 0; i < d.n_camadas; i++){
+    const b = document.createElement('button');
+    b.textContent = i + 1;
+    b.title = i === 0 ? 'a primeira camada' : `camada ${i + 1} de ${d.n_camadas}`;
+    b.classList.toggle('on', i === p4.camada);
+    b.onclick = () => { p4.camada = i; carregarBloco(); };
+    cc.appendChild(b);
+  }
+  const box = $('#toks4'); box.innerHTML = '';
+  state.tokens.slice(0, d.n).forEach((tk) => {
+    const b = document.createElement('button');
+    b.className = 'mchip' + (tk === p4.tok ? ' on' : '');
+    b.style.setProperty('--c', CAT[tk.kind] || '#5b93ff');
+    b.textContent = visivel(tk.texto || tk.superficie);
+    b.onclick = () => { p4.tok = tk; carregarBloco(); };
+    box.appendChild(b);
+  });
+  const cortado = d.n < state.tokens.length ? ` (frase cortada em ${d.n} tokens)` : '';
+  $('#b4nota').textContent = `carona do forward do passo ③ · ${d.n} tokens × ${d.n_camadas} `
+    + `camadas · device do servidor: ${state.device || '?'}${cortado}`;
+}
+
+function celNorma(v, mx, cls){
+  const c = document.createElement('div'); c.className = 'ncell';
+  const bar = document.createElement('div'); bar.className = 'nbar ' + cls;
+  const ench = document.createElement('i');
+  ench.style.width = Math.min(100, v / mx * 100).toFixed(1) + '%';
+  bar.appendChild(ench);
+  const num = document.createElement('span'); num.className = 'nnum'; num.textContent = dec(v);
+  c.append(bar, num);
+  return c;
+}
+
+function desenharPasso4(){
+  const d = p4.dados; if (!d) return;
+  montarControles4();
+  desenharRegua(d);
+  desenharGamma(d);
+  desenharSwiGLU(d);
+}
+
+function desenharRegua(d){
+  $('#b4raiz').textContent = dec(d.raiz_d);
+  let mx = 1e-9;
+  for (const l of d.tokens) mx = Math.max(mx, l.x0, l.n1p, l.n1, l.x2);
+  const box = $('#b4regua'); box.innerHTML = '';
+  for (const l of d.tokens){
+    const row = document.createElement('div'); row.className = 'nrow';
+    const lab = document.createElement('span'); lab.className = 'mlab';
+    const bolinha = document.createElement('i');
+    const tk = state.tokens[l.i];
+    bolinha.style.background = CAT[(tk && tk.kind) || ''] || '#5b93ff';
+    lab.append(bolinha, document.createTextNode(visivel(l.texto || l.token)));
+    row.append(lab, celNorma(l.x0, mx, ''), celNorma(l.n1p, mx, 'puro'),
+               celNorma(l.n1, mx, 'gam'), celNorma(l.a + l.m, mx, 'del'));
+    row.title = `id ${l.id} · Δ atenção ${dec(l.a)} · Δ MLP ${dec(l.m)} · `
+      + `x: ${dec(l.x0)} → ${dec(l.x1)} → ${dec(l.x2)}`;
+    box.appendChild(row);
+  }
+}
+
+function desenharGamma(d){
+  const selBox = $('#b4gsel'); selBox.innerHTML = '';
+  for (const [k, rot] of [['attn', 'norma da atenção'], ['mlp', 'norma do MLP']]){
+    const b = document.createElement('button');
+    b.className = 'mchip' + (p4.gama === k ? ' on' : '');
+    b.textContent = rot;
+    b.onclick = () => { p4.gama = k; desenharGamma(d); };
+    selBox.appendChild(b);
+  }
+  $('#b4gqual').textContent = 'norma ' + (p4.gama === 'attn' ? 'da atenção' : 'do MLP');
+  $('#b4gd').textContent = fmt(d.d);
+  const g = d.gamma[p4.gama];
+  const escala = Math.max(Math.abs(g.min), Math.abs(g.max), 0.01);
+  pintarFaixa($('#b4gamma'), g.faixa, escala, 30);
+  $('#b4gesq').textContent = '−' + dec(escala);
+  $('#b4gesd').textContent = '+' + dec(escala);
+  $('#b4glegenda').textContent = `média ${dec(g.media)} · min ${dec(g.min)} · `
+    + `max ${dec(g.max)} · σ ${dec(g.std)} — γ ≈ 1 significa "a norma não distingue esta `
+    + `dimensão"; γ grande é a dimensão que a camada privilegia`;
+}
+
+function desenharSwiGLU(d){
+  $('#b4hidden').textContent = fmt(d.hidden);
+  $('#b4hidden2').textContent = fmt(d.hidden);
+  pintarFaixa($('#b4g'), d.mlp.g, d.mlp.escala, 30);
+  pintarFaixa($('#b4u'), d.mlp.u, d.mlp.escala, 30);
+  pintarFaixa($('#b4s'), d.mlp.s, d.mlp.escala, 30);
+  const g = $('#b4kvs'); g.innerHTML = '';
+  g.append(
+    kv('portas abertas', `${fmt(d.mlp.abertas)} de ${fmt(d.hidden)}`),
+    kv('porta mais forte', `#${d.mlp.maior.j} · ${dec(d.mlp.maior.valor)}`),
+    kv('a camada somou', `‖Δ‖ ${dec(d.mlp.delta)} num resíduo de ${dec(d.mlp.residuo)}`),
+    kv('escala das faixas', `±${dec(d.mlp.escala)}`));
+  const l = d.tokens[d.i];
+  $('#b4mlpnota').innerHTML = `token <b>${escH(visivel(l.texto || l.token))}</b> na camada `
+    + `<b>${d.camada + 1}</b>: o gate deixou de pé só <b>${fmt(d.mlp.abertas)}</b> das `
+    + `${fmt(d.hidden)} portas com força ≥ 10% da maior. É assim que o modelo guarda fato: `
+    + `uma palavra acende um punhado de neurônios, não todos.`;
 }
 
 /* ---------------------------------------------------------------- ficha */

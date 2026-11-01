@@ -20,8 +20,8 @@ from tokenizers import Regex, Tokenizer, models, pre_tokenizers
 
 from pingo.config import PingoConfig
 from pingo.didatic import (MAX_LAB_TOKENS, TabelaEmbeddings, buscar, bytes_para_superficie,
-                           categoria, especial_ids, superficie_para_bytes, texto_legivel,
-                           tokenizar)
+                           categoria, especial_ids, ficha_bloco, faixa_de,
+                           superficie_para_bytes, texto_legivel, tokenizar)
 from pingo.model import PingoLM
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,7 +117,7 @@ def test_especial_ids_pega_os_tokens_de_chat_mesmo_sem_added_tokens():
 
 def checkpoint_tiny(raiz: Path) -> Path:
     d = raiz / "final"
-    d.mkdir(parents=True)
+    d.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(7)
     cfg = PingoConfig(vocab_size=len(VOCAB), hidden_size=16, num_hidden_layers=1,
                       num_attention_heads=2, intermediate_size=32, max_position_embeddings=16)
@@ -218,6 +218,72 @@ def test_lida_de_volta_a_nota_do_lm_head_e_produto_escalar_com_a_tabela(tmp_path
                                                       reverse=True)
     with pytest.raises(IndexError):
         tabela.lida_de_volta(999)
+
+
+# ------------------------------------------------------------------ passo ④
+
+
+def _camada_tiny(tmp_path) -> tuple[dict, list[int]]:
+    """O dicionário de uma camada **como o `Server` o guarda** (tensors sem a dimensão B
+    + os γ das duas normas), obtido de um forward com `capture` no checkpoint tiny."""
+    d = checkpoint_tiny(tmp_path)
+    modelo = PingoLM.from_pretrained(d, torch_dtype=torch.float32)
+    ids = [4, 9, 10, 5]
+    cap = [{}]
+    with torch.no_grad():
+        modelo(torch.tensor([ids]), capture=cap)
+    chaves = ("w", "q_lin", "q", "k_lin", "k",
+              "x0", "n1p", "n1", "a", "x1", "n2p", "n2", "g", "u", "s", "m", "x2")
+    camada = {k: cap[0][k][0].float() for k in chaves}
+    camada["g_attn"] = modelo.blocks[0].norm_attn.weight.detach()
+    camada["g_mlp"] = modelo.blocks[0].norm_mlp.weight.detach()
+    return camada, ids
+
+
+def test_faixa_de_resume_qualquer_vetor_preservando_os_picos():
+    v = torch.tensor([0.1, -0.9, 0.2, 0.3, -0.05, 0.7, -1.2, 0.4])
+    f = faixa_de(v, bins=4)
+    assert len(f) == 4
+    for i, valor in enumerate(f):
+        grupo = v[i * 2:(i + 1) * 2]
+        assert valor == pytest.approx(float(grupo[grupo.abs().argmax()]), abs=1e-4)
+
+
+def test_ficha_bloco_a_regua_as_gamma_e_o_swinglu(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    camada, ids = _camada_tiny(tmp_path)
+    f = ficha_bloco(camada, ids, tabela.id_para_token, 1, bins=8)
+    assert (f["n"], f["d"], f["hidden"], f["i"]) == (4, 16, 32, 1)
+    assert f["raiz_d"] == pytest.approx(16 ** 0.5, abs=0.01)
+    assert [l["id"] for l in f["tokens"]] == ids
+    assert f["tokens"][1]["token"] == "oi" and f["tokens"][0]["token"] == "<|user|>"
+    # as normas batem com os tensores capturados (a tela desenha números reais, não figuras)
+    for j, l in enumerate(f["tokens"]):
+        assert l["x0"] == pytest.approx(float(camada["x0"][j].norm()), abs=5e-4)
+        assert l["x2"] == pytest.approx(float(camada["x2"][j].norm()), abs=5e-4)
+    # a régua: o RMSNorm puro devolve √d para todos os tokens (o eps deixa folga mínima)
+    for l in f["tokens"]:
+        assert l["n1p"] == pytest.approx(f["raiz_d"], abs=0.1)
+    # γ: estatísticas + faixa das duas normas
+    g = f["gamma"]["mlp"]
+    assert g["media"] == pytest.approx(float(camada["g_mlp"].mean()), abs=1e-3)
+    assert len(g["faixa"]) == 8 and len(f["gamma"]["attn"]["faixa"]) == 8
+    # SwiGLU do token escolhido
+    m = f["mlp"]
+    assert all(len(m[k]) == 8 for k in ("g", "u", "s"))
+    assert m["escala"] >= m["forca_max"] >= 0
+    assert 1 <= m["abertas"] <= 32 and 0 <= m["maior"]["j"] < 32
+    assert m["delta"] == pytest.approx(float(camada["m"][1].norm()), abs=5e-4)
+    assert m["residuo"] == pytest.approx(float(camada["x1"][1].norm()), abs=5e-4)
+
+
+def test_ficha_bloco_fora_da_frase_e_erro_claro(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    camada, ids = _camada_tiny(tmp_path)
+    with pytest.raises(IndexError):
+        ficha_bloco(camada, ids, tabela.id_para_token, 9)
+    with pytest.raises(IndexError):
+        ficha_bloco(camada, ids[:2], tabela.id_para_token, 0)   # ids mais curto que a captura
 
 
 # ------------------------------------------------------------------ busca

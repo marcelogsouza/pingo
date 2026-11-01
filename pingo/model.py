@@ -32,9 +32,15 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
         self.eps = eps
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, capture: dict | None = None,
+                chave: str | None = None) -> torch.Tensor:
+        """`capture`+`chave` (modo didático, passo ④): guarda o vetor **antes do γ** —
+        a lição é que o RMSNorm puro deixa todo vetor com norma √d, e o γ aprende por cima."""
         norm = x.float().pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()
-        return (x.float() * norm).to(x.dtype) * self.weight
+        puro = (x.float() * norm).to(x.dtype)
+        if capture is not None and chave is not None:
+            capture[chave] = puro.detach()
+        return puro * self.weight
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -157,12 +163,25 @@ class SwiGLU(nn.Module):
         self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.down_proj._residual_proj = True  # escala 1/√(2L) no init
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+    def forward(self, x: torch.Tensor, capture: dict | None = None) -> torch.Tensor:
+        """`capture` (modo didático, passo ④): sai com `g/u/s` — o gate, o up e o produto
+        silu(gate)·up, o vetor escondido de `intermediate_size` números. A conta é a mesma
+        de sempre: o capture só segura os intermediários no caminho."""
+        g = self.gate_proj(x)
+        u = self.up_proj(x)
+        s = F.silu(g) * u
+        if capture is not None:
+            capture.update(g=g.detach(), u=u.detach(), s=s.detach())
+        return self.down_proj(s)
 
 
 class PingoBlock(nn.Module):
-    """Pré-norm: x += Attn(RMSNorm(x)); x += SwiGLU(RMSNorm(x))."""
+    """Pré-norm: x += Attn(RMSNorm(x)); x += SwiGLU(RMSNorm(x)).
+
+    `capture` (modo didático): o mesmo dict que a atenção recebe sai também com o bloco
+    inteiro — `x0/n1p/n1/a/x1/n2p/n2` (fluxo residual e as duas normas; `n*p` = antes do γ)
+    e `g/u/s/m/x2` (SwiGLU e a soma final). Sem `capture` o caminho não muda uma linha.
+    """
 
     def __init__(self, config: PingoConfig, layer_idx: int):
         super().__init__()
@@ -174,6 +193,20 @@ class PingoBlock(nn.Module):
     def forward(self, x, cos, sin, cache: PingoCache | None = None,
                 attn_mask: torch.Tensor | None = None,
                 capture: dict | None = None) -> torch.Tensor:
+        if capture is not None:
+            capture["x0"] = x.detach()
+            h = self.norm_attn(x, capture, "n1p")
+            capture["n1"] = h.detach()
+            a = self.attn(h, cos, sin, cache, attn_mask, capture)
+            x = x + a
+            capture["a"] = a.detach()
+            capture["x1"] = x.detach()
+            h = self.norm_mlp(x, capture, "n2p")
+            capture["n2"] = h.detach()
+            m = self.mlp(h, capture)
+            capture["m"] = m.detach()
+            capture["x2"] = (x + m).detach()
+            return x + m
         x = x + self.attn(self.norm_attn(x), cos, sin, cache, attn_mask, capture)
         return x + self.mlp(self.norm_mlp(x))
 
@@ -224,9 +257,10 @@ class PingoLM(PreTrainedModel):
         0..n-1 e o RoPE não precisa de deslocamento. `labels` usa `-100` nas posições que não
         devem contribuir para a loss (prompt e padding) — default do `cross_entropy`.
 
-        `capture` (modo didático, passo ③): lista de um dict vazio por bloco; cada um sai
-        com `q_lin/q/k_lin/k` e `w` (as probabilidades de atenção do prefill). Exige B=1,
-        sem padding e sem cache — o forward normal (treino/geração) não toca nisso.
+        `capture` (modo didático, passos ③–④): lista de um dict vazio por bloco; cada um sai
+        com `q_lin/q/k_lin/k` e `w` (as probabilidades de atenção do prefill) e com o bloco
+        inteiro — `x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`. Exige B=1, sem padding e sem cache —
+        o forward normal (treino/geração) não toca nisso.
         """
         b, t = input_ids.shape
         if capture is not None:

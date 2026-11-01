@@ -289,9 +289,12 @@ def test_capture_nao_muda_os_logits_e_preenche_por_camada(tiny_model):
     cap = [{} for _ in range(2)]
     com = tiny_model(ids, capture=cap).logits
     assert torch.equal(sem, com)                        # bit a bit, com captura pedida
-    assert set(cap[0]) == {"q_lin", "q", "k_lin", "k", "w"}
+    assert set(cap[0]) == {"q_lin", "q", "k_lin", "k", "w",          # ③
+                           "x0", "n1p", "n1", "a", "x1", "n2p", "n2",  # ④
+                           "g", "u", "s", "m", "x2"}
     assert cap[0]["w"].shape == (1, 4, 9, 9)            # [B, H, T, T]
     assert cap[0]["q_lin"].shape == (1, 4, 9, 8)        # head_dim = 32/4 = 8
+    assert cap[0]["x0"].shape == (1, 9, 32) and cap[0]["g"].shape == (1, 9, 64)
 
 
 def test_capture_pesos_sao_probabilidades_casuais(tiny_model):
@@ -316,6 +319,29 @@ def test_capture_q_pos_rope_e_a_rota_oficial_do_rope(tiny_model):
     assert torch.allclose(cap[0]["q"], apply_rope(cap[0]["q_lin"], cos, sin), atol=1e-6)
     # e as normas são preservadas — rotação não estica nada (o relógio é fiel)
     assert torch.allclose(cap[0]["q_lin"].norm(dim=-1), cap[0]["q"].norm(dim=-1), atol=1e-5)
+
+
+def test_capture_bloco_e_fiel_rmsnorm_e_swinglu(tiny_model):
+    """④: a carona também devolve o bloco inteiro, e os números são os do forward real —
+    é com eles que a régua do RMSNorm e as faixas do SwiGLU do lab são desenhadas."""
+    torch.manual_seed(6)
+    ids = torch.randint(0, 101, (1, 9))
+    cap = [{} for _ in range(2)]
+    with torch.no_grad():
+        tiny_model(ids, capture=cap)
+    c, blk = cap[0], tiny_model.blocks[0]
+    d = tiny_model.config.hidden_size
+    assert torch.equal(c["x0"], tiny_model.embed(ids))          # x0 é o embedding
+    # o RMSNorm puro (antes do γ) deixa TODO vetor com norma √d — é a régua do lab
+    # (no tiny o eps pesa ~0,25% da média quadrática; no Pingo real a sobra é desprezível)
+    assert torch.allclose(c["n1p"].norm(dim=-1), torch.full((1, 9), d ** 0.5), atol=0.05)
+    assert torch.allclose(c["n1"], c["n1p"] * blk.norm_attn.weight, atol=1e-6)
+    assert torch.allclose(c["x1"], c["x0"] + c["a"], atol=1e-6)
+    assert torch.allclose(c["n2p"].norm(dim=-1), torch.full((1, 9), d ** 0.5), atol=0.05)
+    assert torch.allclose(c["s"], F.silu(c["g"]) * c["u"], atol=1e-6)   # o produto do gate
+    assert torch.allclose(c["x2"], c["x1"] + c["m"], atol=1e-6)
+    # o fluxo conecta: o que sai do bloco 0 é o que entra no bloco 1
+    assert torch.equal(cap[1]["x0"], cap[0]["x2"])
 
 
 def test_capture_recusa_cache_padding_e_contagem_errada(tiny_model):
