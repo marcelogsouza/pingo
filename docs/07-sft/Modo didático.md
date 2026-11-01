@@ -161,7 +161,10 @@ No passo ② (medidos hoje na mesma tabela):
 `③ RoPE + atenção` · `④ RMSNorm + SwiGLU` · `⑤ lm head — a mesma tabela` (a prévia já roda no
 ②) · `⑥ amostragem` · `⑦ loop`. As etapas ③ em diante vão precisar de *forward com captura de
 intermediários* — aí sim o laboratório vai tocar a GPU, e aí vale o aviso de sempre
-([[Infra e GPU]]).
+([[Infra e GPU]]). No ③ o requisito fechado com o autor (2026-11-01) é desenhar **uma matriz
+de calor `n × n` da atenção por cabeça** (seletor de camada + cabeça, máscara causal visível,
+linha do último token destacada) — não só "o mapa do último token". O que o ② desenha **não é
+atenção**: são os embeddings de entrada; a atenção nasce dentro das camadas, `softmax(QKᵀ/√d)`.
 
 ## Ver também
 

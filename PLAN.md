@@ -113,7 +113,12 @@ pingo/
 11. **Avaliação formal** — benchmarks pt (ex.: tarefas estilo NeurIPS-BR-LP, hellaswag-pt).
 12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passos ① ✔ e ② ✔ entregues** (① tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números e os vizinhos por cosseno; ② embedding: a frase como matriz desenhada, histograma das normas da tabela inteira com extremos, e a "lida de volta" `v·W` lado a lado com o cosseno — o stepper virou abas). ✔ Critério dos passos ①–②: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
     - **② embedding** — ✔ 2026-11-01: o id → vetor (matriz), as normas de todos os vetores, e a prévia do `lm_head` tied (produto escalar ordena diferente do cosseno porque a nota inclui a norma).
-    - **③ RoPE + atenção** — Q/K/V, o ângulo da RoPE por posição e o mapa de atenção do último token (o slide mais esperado).
+    - **③ RoPE + atenção** — Q/K/V, o ângulo da RoPE por posição e as **mapas de calor da
+      atenção entre os tokens, uma matriz por cabeça** (requisito do Marcelo em 2026-11-01): o
+      usuário escolhe camada (12) e cabeça (14) e vê o `softmax(QKᵀ/√d)` de `n_tokens ×
+      n_tokens` desenhado por cima dos tokens da tela — com a **máscara causal visível** (o
+      triângulo superior vazio: ninguém enxerga o futuro), a linha do último token destacada e
+      célula clicável (que token olhou para qual, com o peso). O slide mais esperado do curso.
     - **④ RMSNorm + SwiGLU** — o resto do bloco; comparação antes/depois da normalização.
     - **⑤ lm head** — os 16.387 logits, a mesma tabela do passo 1.
     - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.

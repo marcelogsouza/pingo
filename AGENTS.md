@@ -41,7 +41,9 @@ como matriz + a tabela inteira + a lida de volta tied). Suíte: **149 testes ver
 - Próximos, em `PLAN.md` (passo 12, com os critérios): SFT-5 (opcional, instruções gerais/
   replay de texto), os passos ③–⑦ do modo didático (③ RoPE/atenção →
   ④ RMSNorm/SwiGLU → ⑤ lm head → ⑥ amostragem → ⑦ loop; o ③ é o primeiro que precisa de
-  forward com captura de intermediários — avisar antes de qualquer CUDA) e Passo 8 (**350M — suspenso**).
+  forward com captura de intermediários — avisar antes de qualquer CUDA — e o requisito está
+  fechado no plano: **matriz de calor n×n da atenção por cabeça**, seletor camada×cabeça,
+  máscara causal visível) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 
