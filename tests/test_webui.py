@@ -613,6 +613,59 @@ def test_lab_desdobrar_valida_entradas(ambiente):
                         json={"modelo": "ninguem", "ids": [4, 9]}).status_code == 400
 
 
+# ------------------------------------------------------------------ passo ⑦: loop + KV cache
+
+
+def test_lab_loop_devolve_o_replay_com_o_cache_em_cena(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": [4, 9], "temperature": 0,
+                                            "max_new_tokens": 4})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["modelo"] == "sft" and d["n_prefill"] == 2 and d["n_novos"] == 4
+    ps = d["passos"]
+    assert ps[0]["modo"] == "prefill" and ps[0]["no_forward"] == 2 and ps[0]["escrito"] == 2
+    assert all(p["modo"] == "decode" and p["no_forward"] == 1 and p["escrito"] == 1 for p in ps[1:])
+    ditos = [p["escolhido"]["id"] for p in ps if p.get("escolhido")]
+    assert len(ditos) == 4
+    assert all(depois["entrou"]["id"] == antes for antes, depois in zip(ditos, ps[1:]))
+    assert d["economia"]["com_cache"] == 2 + 4                    # prefill + 1 por step
+    assert d["economia"]["sem_cache"] > d["economia"]["com_cache"]
+    assert d["fita"]["cur_len"] == 2 + 4 and len(d["fita"]["normas_k"]) == 1
+    c = d["compara"]
+    assert c["tokens"] == 6 and c["maxdiff"] < 1e-4 and c["argmax_igual"] is True
+    assert not servidor.gen_lock.locked()
+
+
+def test_lab_loop_semente_reproduz_a_historia(ambiente):
+    cliente, _ = ambiente
+    corpo = {"modelo": "sft", "ids": [4, 9], "seed": 42, "temperature": 0.8,
+             "top_k": 3, "max_new_tokens": 4}
+    a = cliente.post("/api/lab/loop", json=corpo).get_json()
+    b = cliente.post("/api/lab/loop", json=corpo).get_json()
+    ditos = lambda d: [p["escolhido"]["id"] for p in d["passos"] if p.get("escolhido")]
+    assert a["semente"] == 42 and ditos(a) == ditos(b)
+
+
+def test_lab_loop_valida_entradas_e_reserva_o_gen_lock(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": ["x"]}).status_code == 400
+    assert cliente.post("/api/lab/loop",
+                        json={"modelo": "ninguem", "ids": [4, 9]}).status_code == 400
+    r = cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": [4] * 20})   # max_pos 16
+    assert r.status_code == 400 and "contexto" in r.get_json()["erro"]
+    d = cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": [4, 9],
+                                            "max_new_tokens": 999}).get_json()
+    assert d["parada"] in ("contexto", "end_token", "max_tokens")
+    assert d["n_novos"] <= 16 - 2             # quem manda no teto é o contexto do modelo (16)
+    assert servidor.gen_lock.acquire(blocking=False)
+    try:
+        assert cliente.post("/api/lab/loop", json={"modelo": "sft", "ids": [4, 9]}).status_code == 429
+    finally:
+        servidor.gen_lock.release()
+
+
 # ------------------------------------------------------------------ busca de vocab
 
 
@@ -646,6 +699,8 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo and "/api/lab/bloco" in corpo
     assert "/api/lab/lmhead" in corpo
     assert "/api/lab/amostra" in corpo and "/api/lab/desdobrar" in corpo
+    assert "/api/lab/loop" in corpo                              # ⑦ no ar: a aba deixou de estar "off"
+    assert "['loop: o token volta', true]" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 

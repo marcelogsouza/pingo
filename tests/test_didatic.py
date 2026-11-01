@@ -21,7 +21,8 @@ from tokenizers import Regex, Tokenizer, models, pre_tokenizers
 from pingo.config import PingoConfig
 from pingo.didatic import (MAX_LAB_TOKENS, TabelaEmbeddings, buscar, bytes_para_superficie,
                            categoria, especial_ids, ficha_bloco, ficha_lmhead, faixa_de,
-                           menu_amostra, superficie_para_bytes, texto_legivel, tokenizar)
+                           menu_amostra, roda_loop, superficie_para_bytes, texto_legivel,
+                           tokenizar)
 from pingo.model import PingoLM
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -448,6 +449,91 @@ def test_menu_amostra_valida_acoes_e_a_penalidade_pune_quem_repete():
     livre = menu_amostra(linha, [], ID_PARA_TOKEN, repeticao=1.0)
     nota = {c["id"]: c["prob"] for c in punido["candidatos"]}
     assert nota[VOCAB["oi"]] < {c["id"]: c["prob"] for c in livre["candidatos"]}[VOCAB["oi"]]
+
+
+# ------------------------------------------------------------------ loop + KV cache (⑦)
+
+
+def _loop_tiny(tmp_path) -> tuple[PingoLM, dict[int, str]]:
+    """(modelo, id→token) do checkpoint tiny — o mesmo caminho que o `Server` percorre."""
+    d = checkpoint_tiny(tmp_path)
+    modelo = PingoLM.from_pretrained(d, torch_dtype=torch.float32)
+    tabela = TabelaEmbeddings.do_checkpoint(d).vocabulario(tokenizer_fake())
+    return modelo, tabela.id_para_token
+
+
+def test_roda_loop_e_o_generate_stream_token_por_token(tmp_path):
+    """O ⑦ não inventa um loop: são os MESMOS tokens do chat — mesma semente, mesma pena."""
+    from pingo.generate import generate_stream
+    modelo, ipara = _loop_tiny(tmp_path)
+    casos = [{"temperatura": 0.8, "top_k": 3, "seed": 5},
+             {"temperatura": 0.7, "top_p": 0.6, "repeticao": 1.3, "seed": 9}]
+    for kw in casos:
+        r = roda_loop(modelo, [4, 9], ipara, max_novos=5, **kw)
+        ditos = [p["escolhido"]["id"] for p in r["passos"] if p.get("escolhido")]
+        chat = list(generate_stream(modelo, [4, 9], max_new_tokens=5,
+                                    temperature=kw["temperatura"], top_k=kw.get("top_k", 0) or None,
+                                    top_p=kw.get("top_p", 1.0),
+                                    repetition_penalty=kw.get("repeticao", 1.0), seed=kw["seed"]))
+        assert ditos == chat and r["n_novos"] == 5 and r["parada"] == "max_tokens"
+
+
+def test_roda_loop_anota_o_que_entra_o_que_le_e_o_que_escreve(tmp_path):
+    modelo, ipara = _loop_tiny(tmp_path)
+    r = roda_loop(modelo, [4, 9, 10], ipara, max_novos=4, temperatura=0)
+    ps = r["passos"]
+    assert ps[0]["modo"] == "prefill" and ps[0]["no_forward"] == 3 and ps[0]["escrito"] == 3
+    assert ps[0]["cache_antes"] == 0 and ps[0]["cache_depois"] == 3 == ps[0]["kv_lidos"]
+    for antes, depois in zip(ps, ps[1:]):
+        assert depois["modo"] == "decode" and depois["no_forward"] == 1 and depois["escrito"] == 1
+        assert depois["entrou"]["id"] == antes["escolhido"]["id"]     # o escolhido VOLTOU
+        assert depois["cache_depois"] == depois["cache_antes"] + 1 == depois["kv_lidos"]
+        assert depois["sem_cache"] == depois["cache_depois"]          # sem cache pagaria a história toda
+    eco = r["economia"]
+    assert eco["com_cache"] == 3 + len(ps) - 1                        # prefill + 1 por step
+    assert eco["sem_cache"] == sum(p["sem_cache"] for p in ps) > eco["com_cache"]
+    assert eco["numeros_por_posicao"] == 2 * 1 * 2 * 8                # K+V: camadas×heads×head_dim
+
+
+def test_roda_loop_para_no_fim_da_historia_e_no_fim_do_contexto(tmp_path):
+    modelo, ipara = _loop_tiny(tmp_path)
+    primeiro = roda_loop(modelo, [4, 9], ipara, max_novos=1, temperatura=0)
+    r = roda_loop(modelo, [4, 9], ipara, max_novos=2, temperatura=0,
+                  stop_id=primeiro["passos"][0]["escolhido"]["id"])
+    assert r["parada"] == "end_token" and r["n_novos"] == 1
+    esc = r["passos"][0]["escolhido"]
+    assert esc["id"] == primeiro["passos"][0]["escolhido"]["id"]
+    assert esc["top1"] is True and esc["modo"] == "guloso"            # guloso = argmax
+    assert r["compara"] is None                                       # sem decode, preço igual
+    r2 = roda_loop(modelo, [4, 9], ipara, max_novos=64, temperatura=0)  # max_pos do tiny = 16
+    assert r2["parada"] == "contexto" and r2["fita"]["cur_len"] == 16
+    assert "escolhido" not in r2["passos"][-1]                        # o último forward não girou
+
+
+def test_roda_loop_a_fita_e_o_preco_sem_cache_maxdiff_prova_o_cache(tmp_path):
+    modelo, ipara = _loop_tiny(tmp_path)
+    r = roda_loop(modelo, [4, 9, 10], ipara, max_novos=4, temperatura=0)
+    fita = r["fita"]
+    assert fita["cur_len"] == 3 + r["n_novos"]
+    assert len(fita["normas_k"]) == len(fita["normas_v"]) == 1        # 1 camada no tiny
+    assert all(isinstance(x, float) and x > 0 for x in fita["normas_k"][0])
+    assert all(isinstance(x, float) and x > 0 for x in fita["normas_v"][0])
+    c = r["compara"]
+    assert c is not None and c["tokens"] == fita["cur_len"]
+    assert c["maxdiff"] < 1e-4 and c["argmax_igual"] is True          # o cache não muda a resposta
+
+
+def test_roda_loop_semente_reproduz_a_historia_e_sorteio_solto_avisa(tmp_path):
+    modelo, ipara = _loop_tiny(tmp_path)
+    a = roda_loop(modelo, [4, 9], ipara, max_novos=5, temperatura=0.9, seed=42)
+    b = roda_loop(modelo, [4, 9], ipara, max_novos=5, temperatura=0.9, seed=42)
+    ditos = lambda d: [p["escolhido"]["id"] for p in d["passos"] if p.get("escolhido")]
+    assert a["semente"] == 42 and ditos(a) == ditos(b)
+    assert roda_loop(modelo, [4, 9], ipara, max_novos=2, temperatura=0.9)["semente"] is None
+    with pytest.raises(ValueError):
+        roda_loop(modelo, [], ipara)
+    with pytest.raises(ValueError):                                   # max_pos do tiny = 16
+        roda_loop(modelo, [4] * 20, ipara)
 
 
 # ------------------------------------------------------------------ busca

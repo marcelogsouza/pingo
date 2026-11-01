@@ -132,6 +132,23 @@ def test_cache_equivalencia_prefill_e_steps(tiny_model):
     assert cache.cur_len == 13
 
 
+def test_cache_nao_reescreve_posicoes_antigas(tiny_model):
+    """A fita do ⑦ pode jurar colunas congeladas: `update` só escreve a fatia nova."""
+    cache = PingoCache(tiny_model.config, batch_size=1)
+    with torch.no_grad():
+        tiny_model(torch.tensor([[1, 2, 3, 4]]), cache=cache)
+        ks, vs = cache.snapshots()
+        assert cache.cur_len == 4 and all(k is not None for k in ks)
+        antes_k = [k[:, :, :4].clone() for k in ks]
+        antes_v = [v[:, :, :4].clone() for v in vs]
+        for t in (5, 6):
+            tiny_model(torch.tensor([[t]]), cache=cache)
+        ks2, vs2 = cache.snapshots()
+    assert cache.cur_len == 6
+    assert all(torch.equal(a, k[:, :, :4]) for a, k in zip(antes_k, ks2))
+    assert all(torch.equal(a, v[:, :, :4]) for a, v in zip(antes_v, vs2))
+
+
 def test_cache_buffers_pre_alocados(tiny_model):
     x = torch.randint(0, 101, (2, 5))
     with torch.no_grad():

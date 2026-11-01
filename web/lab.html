@@ -215,6 +215,28 @@
   .p6texto .cursor::after{content:"";display:inline-block;width:7px;height:15px;margin-left:2px;
     background:var(--accent2);vertical-align:-2px;animation:p6blink 1s steps(2) infinite}
   @keyframes p6blink{50%{opacity:0}}
+  /* passo ⑦: o loop, a fita do cache e o preço de cada step */
+  .loopbox{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:14px;margin-top:14px}
+  @media(max-width:820px){.loopbox{grid-template-columns:1fr}}
+  .lcell{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:11px 13px;min-width:0}
+  .lcell h4{margin:0 0 9px;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)}
+  .ltok{font:14.5px var(--mono);border-left:3px solid var(--c,#5b93ff);background:var(--panel2);
+    border-radius:8px;padding:8px 11px;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+  .lnum{font:11.5px var(--mono);color:var(--muted);margin-top:9px;line-height:1.8}
+  .lnum b{color:var(--text)}
+  .lfim{color:var(--dim);font-size:13px;line-height:1.6}
+  .fita{margin-top:12px}
+  .fitarow{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .fitarow .lbl{font:10.5px var(--mono);color:var(--dim);width:66px;flex:none;text-align:right}
+  .fitacels{display:flex;gap:2px;flex:1;min-width:0;overflow-x:auto;padding-bottom:2px}
+  .fcel{width:7px;height:17px;flex:none;border-radius:2px;background:var(--panel2)}
+  .fcel.pre{background:#2f6ad0}
+  .fcel.gen{background:var(--green)}
+  .fcel.atual{outline:1.5px solid var(--amber)}
+  .custorow{display:grid;grid-template-columns:96px 1fr 110px;gap:10px;align-items:center;padding:4px 6px}
+  .cmp{margin-top:14px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 13px;font:12px var(--mono);color:var(--muted);line-height:1.8}
+  .cmp b{color:var(--text)}
   /* busca */
   .busca{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
   .busca input{flex:1;min-width:220px;border:1px solid var(--line2);background:var(--bg2);
@@ -594,7 +616,7 @@
       inteiro de uma vez: dali para frente o Pingo gira a roleta sozinho, com os <b>mesmos
       parâmetros</b>, até o <code>&lt;|end|&gt;</code> ou o teto — é para ver o que a
       escolha (sua ou da roda) <b>puxa</b>. Por baixo, é o <code>generate_stream</code> do
-      chat com KV cache: o passo ⑦ do curso, em pré-estreia.</p>
+      chat com KV cache — e o passo ⑦ do curso mostra essa esteira ao vivo, step a step.</p>
     <div class="row">
       <button class="btnp6 girar" id="p6desd">▶ gerar o resto até o fim</button>
       <div class="prm" style="max-width:220px"><label>máx. tokens novos <b id="v6dmax">48</b></label>
@@ -607,10 +629,93 @@
   </section>
   </div>
 
+  <div id="p7" hidden>
+  <section class="card">
+    <h2>7 · O loop — o token escolhido volta (e o KV cache entra em cena)</h2>
+    <p class="hint">Tudo até aqui foi <b>um</b> step: a frase vira ids, o embedding, as camadas,
+      os logits, a roleta. O modelo conversa <b>repetindo</b> esse step: o token escolhido vira
+      a <b>entrada</b> do step seguinte — a história fecha um círculo. Refazer o forward inteiro
+      a cada token custaria caro; o truque é o <b>KV cache</b>: o K e o V de todas as posições
+      antigas, em todas as camadas, ficam na memória — o step novo só calcula a conta do token
+      novo, e a atenção <b>lê</b> o cache. Esta tela toca o loop <b>de verdade</b>: é o mesmo
+      <code>generate_stream</code> do chat (mesma semente, mesma penalidade, mesmo
+      <code>sample_next</code>) com um caderno de notas em cada step. É o fecho do curso —
+      os passos ① a ⑦ de uma esteira só.</p>
+    <div class="row">
+      <div class="prm"><label>temperatura <b id="v7temp">1</b></label>
+        <input type="range" id="p7temp" min="0" max="2" step="0.05" value="1"></div>
+      <div class="prm"><label>top-k <b id="v7topk">livre</b></label>
+        <input type="range" id="p7topk" min="0" max="50" step="1" value="0"></div>
+      <div class="prm"><label>top-p <b id="v7topp">1</b></label>
+        <input type="range" id="p7topp" min="0.05" max="1" step="0.05" value="1"></div>
+      <div class="prm"><label>penalidade de repetição <b id="v7rep">1</b></label>
+        <input type="range" id="p7rep" min="1" max="1.5" step="0.05" value="1"></div>
+    </div>
+    <div class="row">
+      <span class="tit">semente</span>
+      <input class="seedin" id="p7seed" value="1234" spellcheck="false"
+        title="a mesma semente gera o mesmo replay — o ⑥ gira, o ⑦ reproduz">
+      <div class="prm" style="max-width:220px"><label>máx. tokens novos <b id="v7max">24</b></label>
+        <input type="range" id="p7max" min="4" max="64" step="4" value="24"></div>
+      <button class="btnp6 girar" id="p7run">▶ rodar o loop</button>
+      <button class="btnp6" id="p7play" disabled>⏯ tocar o replay</button>
+      <span class="hint2" id="p7rodanota">o replay inteiro numa chamada — a animação é do navegador</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>O step ao vivo — o que entra, o que o cache segura, o que a roleta escolhe</h2>
+    <div class="row">
+      <button class="btnp6" id="p7prev" title="step anterior">⏮</button>
+      <input type="range" id="p7scrub" min="0" max="0" step="1" value="0"
+        style="flex:1;max-width:340px">
+      <button class="btnp6" id="p7next" title="próximo step">⏭</button>
+      <span class="hint2" id="p7stepnota">—</span>
+    </div>
+    <div class="loopbox">
+      <div class="lcell"><h4>↦ entra no forward</h4><div id="p7ent"></div></div>
+      <div class="lcell"><h4>o modelo faz a conta de…</h4><div class="lnum" id="p7conta">—</div></div>
+      <div class="lcell"><h4>a roleta escolhe — ⟲ e ele volta</h4><div id="p7escolha"></div></div>
+    </div>
+    <div class="tit">a história até este step</div>
+    <div class="mchips" id="p7hist"></div>
+    <div class="hint2" id="p7fimnota"></div>
+  </section>
+  <section class="card">
+    <h2>A fita do KV cache — o que o modelo segura entre um step e outro</h2>
+    <p class="hint">Cada quadradinho é o K <b>e</b> o V de <b>uma camada para uma posição</b>:
+      <span id="p7porpos">1.792</span> números (heads × head_dim × 2), escritos
+      <b>uma única vez</b> e relidos por todos os steps seguintes. O prefill acendeu a frase
+      inteira de uma vez; cada step novo acende <b>uma coluna só</b> — e nenhuma coluna antiga
+      muda nunca. Passe o mouse para ver as normas ‖K‖ e ‖V‖ e quando a posição foi escrita.</p>
+    <div class="fita" id="p7fita"></div>
+    <div class="escala"><span id="p7fitanota">—</span>
+      <span>azul = prefill · verde = gerados · âmbar = escrito agora</span>
+      <span id="p7cachebytes">—</span></div>
+  </section>
+
+  <section class="card">
+    <h2>O preço de cada step — com cache e sem cache</h2>
+    <p class="hint">As barras contam <b>tokens-forward</b> acumulados até o step do replay:
+      com cache, cada step paga <b>1</b> token de conta (mais o prefill, pago uma vez); sem
+      cache, pagaria a <b>história inteira</b> de novo — é por isso que gerar sem cache é
+      O(n²). O card abaixo é a prova: o <b>último step refeito sem cache</b>, cronometrado,
+      com os logits comparados aos do cache.</p>
+    <div class="custorow"><span class="nhead">com cache</span>
+      <div class="nbar"><i id="p7bc" style="width:0%"></i></div>
+      <span class="nnum" id="p7nc">—</span></div>
+    <div class="custorow"><span class="nhead">sem cache</span>
+      <div class="nbar gam"><i id="p7bs" style="width:0%"></i></div>
+      <span class="nnum" id="p7ns">—</span></div>
+    <div class="cmp" id="p7cmp">—</div>
+  </section>
+  </div>
+
   <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
     de <span id="vocab">16.000</span> pedaços · passos ① e ② leem o <code>.safetensors</code>
-    sem GPU; os passos ③, ④, ⑤ e ⑥ rodam um forward real no device do servidor (④, ⑤ e ⑥ de
-    carona no do ③ — o ⑥ ainda usa o <code>generate_stream</code> no desdobramento)</p>
+    sem GPU; os passos ③–⑥ rodam um forward real no device do servidor (④, ⑤ e ⑥ de carona no
+    do ③) e o ⑦ toca o <code>generate_stream</code> do chat com KV cache — a esteira inteira,
+    do byte ao token de volta</p>
 </div>
 
 <div id="ficha">
@@ -644,7 +749,7 @@ const CAT = {
 const PASSOS = [
   ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', true],
   ['RMSNorm + SwiGLU', true], ['lm head — a mesma tabela!', true],
-  ['amostragem — a roleta!', true], ['loop: o token volta', false],
+  ['amostragem — a roleta!', true], ['loop: o token volta', true],
 ];
 const EXEMPLOS = [
   "Quanto a Companhia vai investir até 2028?",
@@ -682,12 +787,14 @@ function irPara(n){
   $('#p4').hidden = n !== 4;
   $('#p5').hidden = n !== 5;
   $('#p6').hidden = n !== 6;
+  $('#p7').hidden = n !== 7;
   [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
   if (n === 2) desenharPasso2();
   if (n === 3) garantirAtencao();
   if (n === 4) garantirBloco();
   if (n === 5) garantirLmhead();
   if (n === 6) garantirAmostragem();
+  if (n === 7) garantirLoop();
 }
 
 /* ---------------------------------------------------------------- modelos */
@@ -2138,6 +2245,188 @@ async function procurar(){
   }
 }
 
+/* ------------------------------------------------ passo ⑦ · o loop e o KV cache */
+/* O servidor roda o generate_stream de verdade, com caderno de notas, numa chamada só.
+   O navegador só toca o replay: scrubber, play/pause, a fita acendendo coluna a coluna
+   e as barras de custo crescendo — o loop é do servidor, a animação é nossa. */
+const MAX_P7_PREFILL = 96;      // a fita precisa caber na tela: frase curta no ⑦
+const p7 = {dados: null, chave: '', k: 0, tocando: 0, ocupado: false, timerP: null, max: 24,
+            params: {temperature: 1.0, top_k: 0, top_p: 1.0, repetition_penalty: 1.0, seed: 1234}};
+
+const p7ids = () => state.tokens.slice(0, MAX_P7_PREFILL).map(t => t.id);
+const p7chave = () => [state.modelo, p7ids().join(','), JSON.stringify(p7.params), p7.max].join('|');
+const p7dec = x => String(x).replace('.', ',');
+
+async function rodarLoop(){
+  if (p7.ocupado || !p7ids().length) return;
+  p7.ocupado = true;
+  pararToque();
+  $('#p7rodanota').textContent = 'rodando o loop no servidor…';
+  let r;
+  try {
+    r = await fetch('/api/lab/loop', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({modelo: state.modelo, ids: p7ids(),
+                                          max_new_tokens: p7.max}, p7.params))});
+  } catch (e){ p7.ocupado = false; erro('servidor fora do ar: ' + e.message); return; }
+  const d = await r.json();
+  p7.ocupado = false;
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  p7.dados = d; p7.chave = p7chave(); p7.k = 0;
+  $('#p7rodanota').textContent = d.passos.length + ' forwards · ' + d.n_novos + ' tokens novos · ' +
+    (d.filtros.temperatura <= 0 ? 'guloso (T=0)' : 'roleta') +
+    (d.semente != null ? ' · semente ' + d.semente : ' · sorteio solto');
+  desenharLoop();
+}
+
+function garantirLoop(){
+  if (p7.dados && p7.chave === p7chave()){ desenharLoop(); return; }
+  rodarLoop();
+}
+
+function pararToque(){
+  if (p7.tocando){ clearInterval(p7.tocando); p7.tocando = 0; }
+  $('#p7play').textContent = '⏯ tocar o replay';
+}
+function tocarLoop(){
+  if (!p7.dados) return;
+  if (p7.tocando){ pararToque(); return; }
+  if (p7.k >= p7.dados.passos.length - 1) p7.k = 0;
+  $('#p7play').textContent = '⏸ pausar';
+  p7.tocando = setInterval(() => {
+    if (!p7.dados || p7.k >= p7.dados.passos.length - 1){ pararToque(); return; }
+    p7.k++; desenharLoop();
+  }, 750);
+}
+
+function chip7(t, extra){
+  const s = document.createElement('span');
+  s.className = 'hchip' + (extra || '');
+  s.style.setProperty('--c', CAT[t.kind] || '#5b93ff');
+  s.textContent = visivel(t.texto || t.token || t.superficie);
+  s.title = `${t.token || t.superficie} · id ${t.id}`;
+  return s;
+}
+
+function desenharLoop(){
+  const d = p7.dados;
+  if (!d){ $('#p7stepnota').textContent = 'aguardando o replay…'; return; }
+  const ps = d.passos;
+  if (p7.k > ps.length - 1) p7.k = ps.length - 1;
+  const p = ps[p7.k], ultimo = p7.k === ps.length - 1;
+  const rot = d.parada === 'end_token' ? 'no <|end|>' : (d.parada === 'contexto' ? 'no contexto cheio' : 'no teto de tokens');
+  $('#p7play').disabled = false;
+  $('#p7scrub').max = ps.length - 1;
+  $('#p7scrub').value = p7.k;
+  $('#p7stepnota').textContent = `step ${p.k} de ${ps.length - 1} · ` +
+    (p.modo === 'prefill' ? 'o prefill: a frase inteira, uma vez só'
+                          : 'decode: só o token que voltou como entrada') +
+    (ultimo ? ` · fim — o modelo parou ${rot}` : '');
+
+  /* painel 1: o que entra */
+  const ent = $('#p7ent'); ent.innerHTML = '';
+  if (p.modo === 'prefill'){
+    const box = document.createElement('div');
+    box.className = 'ltok'; box.style.setProperty('--c', '#8d98aa');
+    box.textContent = `a frase inteira · ${p.no_forward} tokens`;
+    ent.appendChild(box);
+  } else {
+    ent.appendChild(chip7(p.entrou));
+    const n = document.createElement('div'); n.className = 'lnum';
+    n.innerHTML = `ele é o escolhido do <b>step ${p.k - 1}</b> — o token escolhido <b>volta</b> como entrada`;
+    ent.appendChild(n);
+  }
+
+  /* painel 2: a conta do step */
+  $('#p7conta').innerHTML =
+    `forward de <b>${p.no_forward}</b> token${p.no_forward > 1 ? 's' : ''} × <b>${d.camadas}</b> camadas<br>` +
+    `escreve no cache <b>${p.escrito}</b> posiç${p.escrito > 1 ? 'ões' : 'ão'} (${p.cache_antes} → <b>${p.cache_depois}</b>)<br>` +
+    `a atenção lê o cache inteiro: <b>${p.kv_lidos}</b> posiç${p.kv_lidos > 1 ? 'ões' : ''}<br>` +
+    `sem cache, este step pagaria <b>${p.sem_cache}</b> tokens de conta<br>` +
+    `tempo real deste step: <b>${p7dec((p.segundos * 1000).toFixed(1))} ms</b>`;
+
+  /* painel 3: a escolha que fecha o círculo */
+  const es = $('#p7escolha'); es.innerHTML = '';
+  if (p.escolhido){
+    es.appendChild(chip7(p.escolhido));
+    const n = document.createElement('div'); n.className = 'lnum';
+    n.innerHTML = `${p.escolhido.modo === 'guloso' ? 'argmax puro (T=0)' : 'a roleta do ⑥ girou'}: ` +
+      `posto <b>${p.escolhido.rank}</b> · p ${p7dec(p.escolhido.p_bruto.toFixed(4))} · ` +
+      `nota ${p7dec(p.escolhido.logit)}<br>` +
+      (ultimo && d.parada === 'end_token'
+        ? '⏹ este escolhido foi o <b>&lt;|end|&gt;</b>: a resposta fechou — ele nunca voltou como entrada'
+        : `⟲ este token é a <b>entrada</b> do step ${p.k + 1}`);
+    es.appendChild(n);
+  } else {
+    es.innerHTML = `<div class="lfim">o loop parou ${rot} — este último forward não chegou a girar a roleta</div>`;
+  }
+
+  /* a história até aqui: prefill + o que já entrou no cache, e o próximo (fantasma) */
+  const hist = $('#p7hist'); hist.innerHTML = '';
+  for (const t of state.tokens.slice(0, d.n_prefill)) hist.appendChild(chip7(t));
+  for (let j = 0; j < p7.k; j++) hist.appendChild(chip7(ps[j].escolhido, ' gen'));
+  if (p.escolhido){
+    const g = chip7(p.escolhido, ' gen');
+    g.style.opacity = '.45';
+    g.title += p7.k === ps.length - 1 && d.parada === 'end_token'
+      ? ' · o escolhido que encerrou a história — nunca voltou como entrada'
+      : ' · ainda não entrou: é o próximo a voltar';
+    hist.appendChild(g);
+  }
+  $('#p7fimnota').textContent = ultimo
+    ? `o modelo gerou ${d.n_novos} tokens e parou ${rot} — cada um deles voltou como entrada do step seguinte`
+    : '';
+
+  desenharFita7(p, d);
+  desenharCusto7(p, d);
+}
+
+function desenharFita7(p, d){
+  const fita = $('#p7fita'); fita.innerHTML = '';
+  for (let l = 0; l < d.camadas; l++){
+    const row = document.createElement('div'); row.className = 'fitarow';
+    const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = `camada ${l}`;
+    row.appendChild(lbl);
+    const cells = document.createElement('div'); cells.className = 'fitacels';
+    for (let pos = 0; pos < d.fita.cur_len; pos++){
+      const c = document.createElement('div'); c.className = 'fcel';
+      if (pos < p.cache_depois){
+        c.classList.add(pos < d.n_prefill ? 'pre' : 'gen');
+        if (p.modo === 'decode' && pos === p.cache_depois - 1) c.classList.add('atual');
+        c.title = `camada ${l} · posição ${pos} · ‖K‖ ${d.fita.normas_k[l][pos]} · ‖V‖ ${d.fita.normas_v[l][pos]} · ` +
+          (pos < d.n_prefill ? 'escrita no prefill' : `escrita no step ${pos - d.n_prefill + 1}, congelada desde então`);
+      } else {
+        c.title = `camada ${l} · posição ${pos} · vazia — só enche no step ${pos - d.n_prefill + 1}`;
+      }
+      cells.appendChild(c);
+    }
+    row.appendChild(cells); fita.appendChild(row);
+  }
+  $('#p7porpos').textContent = fmt(d.economia.numeros_por_posicao);
+  $('#p7fitanota').textContent = `${p.cache_depois} de ${d.fita.cur_len} posições ocupadas`;
+  $('#p7cachebytes').textContent = `cache: ${p7dec((p.cache_depois * d.economia.bytes_por_posicao / 2**20).toFixed(2))} MB`;
+}
+
+function desenharCusto7(p, d){
+  let cc = 0, sc = 0;
+  for (let i = 0; i <= p7.k; i++){ cc += d.passos[i].no_forward; sc += d.passos[i].sem_cache; }
+  const escala = Math.max(d.economia.sem_cache, 1);
+  $('#p7bc').style.width = (100 * cc / escala) + '%';
+  $('#p7bs').style.width = (100 * sc / escala) + '%';
+  $('#p7nc').textContent = `${fmt(cc)} tokens-forward`;
+  $('#p7ns').textContent = `${fmt(sc)} tokens-forward`;
+  const c = d.compara;
+  $('#p7cmp').innerHTML = c
+    ? `o último step, refeito <b>sem cache</b> num forward de <b>${fmt(c.tokens)}</b> tokens: ` +
+      `<b>${p7dec(c.sem_cache_ms)} ms</b> contra <b>${p7dec(c.com_cache_ms)} ms</b> com cache — ` +
+      `e os logits saíram <b>os mesmos</b> (maxdiff ${c.maxdiff.toExponential(1)}, mesmo argmax: ` +
+      `${c.argmax_igual ? 'sim' : 'não'}): o cache não muda a resposta, só o preço` +
+      ` · no replay inteiro: <b>${fmt(d.economia.com_cache)}</b> tokens-forward com cache contra ` +
+      `<b>${fmt(d.economia.sem_cache)}</b> sem`
+    : 'sem steps de decode nesta run — nada para comparar';
+}
+
 /* ---------------------------------------------------------------- eventos */
 $('#q').addEventListener('input', aoEscrever);
 EXEMPLOS.forEach(t => {
@@ -2188,6 +2477,40 @@ $('#p6recomecar').onclick = () => {
   resetP6(true);
   desenharPasso6(); garantirAmostragem();
 };
+
+/* controles do passo ⑦ */
+const P7_SLIDERS = [['p7temp', 'temperature', 'v7temp'], ['p7topk', 'top_k', 'v7topk'],
+                    ['p7topp', 'top_p', 'v7topp'], ['p7rep', 'repetition_penalty', 'v7rep']];
+for (const [id, chave, alvo] of P7_SLIDERS){
+  const el = $('#' + id), out = $('#' + alvo);
+  el.oninput = () => {
+    p7.params[chave] = +el.value;
+    out.textContent = (chave === 'top_k' && +el.value === 0) ? 'livre' : el.value;
+    clearTimeout(p7.timerP); p7.timerP = setTimeout(() => { if (state.passo === 7) rodarLoop(); }, 300);
+  };
+}
+$('#p7seed').oninput = () => {
+  const v = $('#p7seed').value.trim();
+  p7.params.seed = v === '' || !Number.isFinite(parseInt(v, 10)) ? -1 : parseInt(v, 10);
+  if (p7.params.seed > 2147483647) p7.params.seed = 2147483647;
+  clearTimeout(p7.timerP); p7.timerP = setTimeout(() => { if (state.passo === 7) rodarLoop(); }, 350);
+};
+$('#p7max').oninput = () => {
+  p7.max = +$('#p7max').value;
+  $('#v7max').textContent = $('#p7max').value;
+  clearTimeout(p7.timerP); p7.timerP = setTimeout(() => { if (state.passo === 7) rodarLoop(); }, 300);
+};
+$('#p7run').onclick = rodarLoop;
+$('#p7play').onclick = tocarLoop;
+$('#p7prev').onclick = () => {
+  pararToque();
+  if (p7.dados && p7.k > 0){ p7.k--; desenharLoop(); }
+};
+$('#p7next').onclick = () => {
+  pararToque();
+  if (p7.dados && p7.k < p7.dados.passos.length - 1){ p7.k++; desenharLoop(); }
+};
+$('#p7scrub').oninput = () => { pararToque(); p7.k = +$('#p7scrub').value; desenharLoop(); };
 let redesenho = null;
 window.addEventListener('resize', () => {
   clearTimeout(redesenho);

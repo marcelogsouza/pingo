@@ -61,9 +61,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pingo.didatic import (LIDA_PADRAO, MAX_AMOSTRA_TOKENS, MAX_ATTN_TOKENS,  # noqa: E402
-                           MAX_LAB_CHARS, MAX_LAB_TOKENS, TabelaEmbeddings, TOPK_LMHEAD,
-                           VIZINHOS_PADRAO, buscar, especial_ids, ficha_bloco, ficha_lmhead,
-                           menu_amostra, tokenizar, texto_legivel)
+                           MAX_LAB_CHARS, MAX_LAB_TOKENS, MAX_LOOP_NOVOS, TabelaEmbeddings,
+                           TOPK_LMHEAD, VIZINHOS_PADRAO, buscar, especial_ids, ficha_bloco,
+                           ficha_lmhead, menu_amostra, roda_loop, tokenizar, texto_legivel)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
@@ -725,6 +725,53 @@ def create_app(server: Server | None = None) -> Flask:
                                  "texto": texto_legivel(tabela.token(i))} for i in novos],
                      "texto": carregado.tokenizer.decode(novos, skip_special_tokens=False)
                               if novos else ""}
+        except Exception as exc:  # noqa: BLE001 — um generate real falha de muitos jeitos
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
+        return jsonify(saida)
+
+    # -- passo ⑦: o loop e o KV cache — o generate_stream do chat tocado passo a passo ----
+
+    @app.post("/api/lab/loop")
+    def lab_loop():
+        """O ⑦: o mesmo `generate_stream` do chat, com caderno de notas em cada step.
+
+        A tela não pede um loop de mentira: `roda_loop` roda o loop de verdade (mesma semente,
+        mesma penalidade, mesmo `sample_next`) e anota o que entrou no forward, o que o cache
+        segurava, o que a atenção leu e o que foi escrito. Uma chamada devolve o replay inteiro
+        — o cliente só toca a animação. No fim, o `compara` refaz o último step SEM cache e
+        mede o preço (e o maxdiff prova que o cache não muda a resposta).
+        """
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (dados.get("ids") or [])][:MAX_AMOSTRA_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        max_novo = int(_num(dados, "max_new_tokens", 24, 4, MAX_LOOP_NOVOS, inteiro=True))
+        p = params_amostra(dados)
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            carregado = srv.carregar(model_id)
+            saida = roda_loop(carregado.model, ids, srv.tabela_de(model_id).id_para_token,
+                              max_novos=max_novo, temperatura=p["temperature"],
+                              top_k=p["top_k"], top_p=p["top_p"],
+                              repeticao=p["repetition_penalty"],
+                              seed=None if p["seed"] < 0 else p["seed"],
+                              stop_id=carregado.end_id if carregado.spec.instrucao else None,
+                              especiais=especial_ids(srv.tokenizador_de(model_id)))
+            saida.update({"modelo": model_id, "n": len(ids),
+                          "cortado_em": MAX_AMOSTRA_TOKENS if len(ids) >= MAX_AMOSTRA_TOKENS
+                          else None})
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
         except Exception as exc:  # noqa: BLE001 — um generate real falha de muitos jeitos
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
         finally:

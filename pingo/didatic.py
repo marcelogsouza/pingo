@@ -1,4 +1,4 @@
-"""Modo didático (passos ①–⑥) — do texto aos ids, aos vetores, ao bloco, às notas do lm head e à roleta.
+"""Modo didático (passos ①–⑦) — do texto aos ids, aos vetores, ao bloco, às notas do lm head, à roleta e ao loop.
 
 O curso do Pingo precisa mostrar o que o modelo *vê* antes de qualquer conta: o BPE
 byte-level fatiando a frase em pedaços (com o id de cada um), o vetor que cada id carrega
@@ -9,7 +9,10 @@ funções daqui só desenham os tensores capturados — `ficha_bloco` para o blo
 `ficha_lmhead` para a norm final + os logits (⑤). O passo ⑥ pega a mesma carona e vira
 **conta**: `menu_amostra` aplica temperatura, top-k e top-p exatamente como
 `generate.sample_next` e devolve o menu que desenha a roleta — cada fatia mede
-**360° × a probabilidade** do token.
+**360° × a probabilidade** do token. O passo ⑦ fecha a esteira: `roda_loop` toca o
+`generate_stream` do chat passo a passo, com caderno de notas — o que entra em cada
+forward (prefill = a frase; decode = só o token escolhido, que **volta** como entrada),
+o que o `PingoCache` segurava, o que a atenção leu e o preço de cada step com e sem cache.
 
 Duas decisões estruturam o módulo:
 
@@ -27,6 +30,7 @@ Tudo aqui é puro e testeiro em CPU: nada importa Flask, nada toca em checkpoint
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,11 +38,15 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from .cache import PingoCache
+from .generate import apply_repetition_penalty, sample_next
+
 # ------------------------------------------------------------------ limites
 
 MAX_LAB_CHARS = 4_000      # teto do texto que o navegador pode mandar
 MAX_LAB_TOKENS = 512       # teto de chips desenhados (acima disso, avisa e corta)
-MAX_AMOSTRA_TOKENS = 160   # teto de tokens (frase + gerados) na roleta do passo ⑥
+MAX_AMOSTRA_TOKENS = 160   # teto de tokens (frase + gerados) no ⑥ (roleta) e no ⑦ (loop)
+MAX_LOOP_NOVOS = 64        # teto de tokens novos no replay do ⑦ (a fita do cache é desenhável)
 VIZINHOS_PADRAO = 8        # k da lista "tokens vizinhos"
 BUSCA_PADRAO = 20          # limites do lookup no vocab
 FAIXA_BINS = 128           # colunas da linha da matriz (896 = 7 × 128; funciona p/ qualquer dim)
@@ -639,6 +647,133 @@ def menu_amostra(linha: torch.Tensor, vistos: list[int], id_para_token: dict[int
     if escolhido is not None:
         saida["sorteado"] = {"modo": modo, "dentro": dentro, **quem(escolhido)}
     return saida
+
+
+# ------------------------------------------------------------------ loop + KV cache (passo ⑦)
+
+
+@torch.no_grad()
+def roda_loop(modelo, ids: list[int], id_para_token: dict[int, str], *,
+              max_novos: int = 24, temperatura: float = 1.0, top_k: int = 0,
+              top_p: float = 1.0, repeticao: float = 1.0, seed: int | None = None,
+              stop_id: int | None = None,
+              especiais: set[int] | frozenset[int] = frozenset(),
+              comparar: bool = True) -> dict[str, Any]:
+    """O passo ⑦: o loop do chat tocado passo a passo, com o KV cache em cena.
+
+    O ⑥ já girava um token por vez; aqui sobe ao palco o **cache**. A função É o loop de
+    `generate_stream` — mesma ordem de RNG (semente), mesma penalidade de repetição sobre a
+    história toda, mesmo `sample_next` — só que com caderno de notas: cada passo registra o
+    que entrou no forward (`no_forward`: prefill = a frase toda, decode = 1 token, o
+    escolhido do passo anterior — *o token volta*), o que o cache já segurava
+    (`cache_antes`), o que a atenção leu (`kv_lidos`) e o que foi escrito agora
+    (`escrito`). Daí saem a `fita` (‖K‖ e ‖V‖ de cada posição em cada camada — o que o
+    cache realmente guarda, e que não é reescrito nunca), a `economia` (tokens-forward com
+    e sem cache) e o `compara`: o mesmo step refeito SEM cache, com o `maxdiff` dos logits
+    provando que o cache não muda a resposta — só o preço.
+    """
+    if not ids:
+        raise ValueError("mande os ids da frase")
+    cfg = modelo.config
+    if len(ids) >= cfg.max_position_embeddings:
+        raise ValueError(f"a frase ({len(ids)} tokens) não cabe no contexto "
+                         f"({cfg.max_position_embeddings})")
+    modelo.eval()
+    if seed is not None and int(seed) >= 0:
+        torch.manual_seed(int(seed))
+    dev = next(modelo.parameters()).device
+
+    def chip(i: int) -> dict[str, Any]:
+        nome = id_para_token.get(int(i), f"<id {i}>")
+        texto = texto_legivel(nome)
+        return {"id": int(i), "token": nome, "texto": texto,
+                "kind": categoria(nome, texto, int(i) in especiais)}
+
+    def escolher(i: int, bruto: torch.Tensor) -> dict[str, Any]:
+        """O chip do escolhido + a conta da roleta: nota crua, p sem filtro, posto e se era o favorito."""
+        p = F.softmax(bruto.float(), dim=-1)
+        return {**chip(int(i)),
+                "modo": "guloso" if temperatura <= 0 else "roleta",
+                "logit": round(float(bruto[int(i)]), 4),
+                "p_bruto": round(float(p[int(i)]), 6),
+                "rank": int((p > p[int(i)]).sum()) + 1,
+                "top1": bool(int(bruto.float().argmax()) == int(i))}
+
+    cache = PingoCache(cfg, batch_size=1)
+    seq = torch.tensor([list(ids)], dtype=torch.long, device=dev)
+    passos: list[dict[str, Any]] = []
+    novos: list[int] = []
+    parada = "max_tokens"
+
+    t0 = time.perf_counter()
+    logits = modelo(seq, cache=cache).logits[:, -1]          # prefill: a frase de uma vez
+    passos.append({"k": 0, "modo": "prefill", "entrou": None, "no_forward": len(ids),
+                   "escrito": cache.cur_len, "cache_antes": 0, "cache_depois": cache.cur_len,
+                   "kv_lidos": cache.cur_len, "sem_cache": len(ids),
+                   "segundos": round(time.perf_counter() - t0, 4)})
+    passo = passos[0]
+
+    for _ in range(max(0, int(max_novos))):
+        if cache.cur_len >= cfg.max_position_embeddings:
+            parada = "contexto"
+            break
+        bruto = logits[0]                                     # a linha crua do último forward
+        pen = (apply_repetition_penalty(logits, torch.unique(seq[0]), repeticao)
+               if repeticao != 1.0 else logits)
+        nxt = int(sample_next(pen, temperature=temperatura, top_k=top_k or None, top_p=top_p))
+        seq = torch.cat((seq, torch.tensor([[nxt]], dtype=torch.long, device=dev)), dim=-1)
+        novos.append(nxt)
+        passo["escolhido"] = escolher(nxt, bruto)
+        if stop_id is not None and nxt == stop_id:
+            parada = "end_token"
+            break
+        t0 = time.perf_counter()
+        logits = modelo(torch.tensor([[nxt]], dtype=torch.long, device=dev),
+                        cache=cache).logits[:, -1]            # decode: 1 token, o que voltou
+        passo = {"k": passos[-1]["k"] + 1, "modo": "decode", "entrou": chip(nxt),
+                 "no_forward": 1, "escrito": 1,
+                 "cache_antes": cache.cur_len - 1, "cache_depois": cache.cur_len,
+                 "kv_lidos": cache.cur_len, "sem_cache": cache.cur_len,
+                 "segundos": round(time.perf_counter() - t0, 4)}
+        passos.append(passo)
+
+    ks, vs = cache.snapshots()
+    cur = cache.cur_len
+    ok = [l for l in range(cfg.num_hidden_layers) if ks[l] is not None]
+    por_pos = 2 * cfg.num_hidden_layers * cfg.num_attention_heads * cfg.head_dim
+    fita = {"cur_len": cur,
+            "normas_k": [[round(float(ks[l][0, :, p, :].norm()), 3) if l in ok else None
+                          for p in range(cur)] for l in range(cfg.num_hidden_layers)],
+            "normas_v": [[round(float(vs[l][0, :, p, :].norm()), 3) if l in ok else None
+                          for p in range(cur)] for l in range(cfg.num_hidden_layers)]}
+    economia = {"com_cache": sum(p["no_forward"] for p in passos),
+                "sem_cache": sum(p["sem_cache"] for p in passos),
+                "numeros_por_posicao": por_pos,
+                "bytes_por_posicao": por_pos * (ks[ok[0]].element_size() if ok else 4),
+                "cache_mb": round(por_pos * cur * (ks[ok[0]].element_size() if ok else 4)
+                                  / 2**20, 3) if ok else 0.0}
+
+    compara = None
+    if comparar and passos[-1]["k"] >= 1:      # sem decode, o preço com e sem cache é o mesmo
+        # o re-forward cobre exatamente os tokens que o cache comeu (no `end_token` o token de
+        # parada foi escolhido mas nunca entrou num forward — a linha a comparar é a anterior)
+        seqc = seq[:, :cache.cur_len]
+        t0 = time.perf_counter()
+        out_cheio = modelo(seqc, cache=None).logits[0, -1]     # o MESMO step, sem cache nenhum
+        diff = (out_cheio.float() - logits[0].float()).abs()
+        compara = {"tokens": int(seqc.shape[1]),
+                   "com_cache_ms": round(1000 * passos[-1]["segundos"], 1),
+                   "sem_cache_ms": round(1000 * (time.perf_counter() - t0), 1),
+                   "maxdiff": round(float(diff.max()), 8),
+                   "argmax_igual": bool(int(out_cheio.argmax()) == int(logits[0].argmax()))}
+
+    return {"n_prefill": len(ids), "n_novos": len(novos), "parada": parada,
+            "camadas": cfg.num_hidden_layers, "heads": cfg.num_attention_heads,
+            "head_dim": cfg.head_dim,
+            "filtros": {"temperatura": round(float(temperatura), 4), "top_k": int(top_k or 0),
+                        "top_p": round(float(top_p), 4), "repeticao": round(float(repeticao), 4)},
+            "semente": int(seed) if seed is not None and int(seed) >= 0 else None,
+            "passos": passos, "economia": economia, "fita": fita, "compara": compara}
 
 
 # ------------------------------------------------------------------ busca no vocab

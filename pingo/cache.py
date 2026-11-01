@@ -74,3 +74,12 @@ class PingoCache:
         """Avança a posição após um forward completo (chamado por PingoLM.forward)."""
         self._cur_len += self._pending
         self._pending = 0
+
+    def snapshots(self) -> tuple[list[torch.Tensor | None], list[torch.Tensor | None]]:
+        """Buffers K/V por camada (None onde ainda não houve escrita) — leitura do ⑦.
+
+        O que está nas posições antigas é imutável: cada `update` só escreve a fatia nova
+        `[cur_len : cur_len+t]`. É por isso que o passo ⑦ pode mostrar ‖K‖ e ‖V‖ de cada
+        posição depois do loop — são exatamente os vetores que a atenção leu, intactos.
+        """
+        return list(self._k), list(self._v)
