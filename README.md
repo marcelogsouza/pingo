@@ -141,7 +141,7 @@ formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
 ### Modo didático — `/lab`
 
 A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. Os
-passos ① e ② estão prontos — **tokenização** e **embedding**:
+passos ①, ② e ③ estão prontos — **tokenização**, **embedding** e **RoPE + atenção**:
 
 - o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
   número, byte puro), cada um com o **id** da tabela embaixo;
@@ -154,10 +154,17 @@ passos ① e ② estão prontos — **tokenização** e **embedding**:
   tokens de chat — e a tabela é **lida de volta**: as notas que um `lm_head` tied daria do
   vetor inicial, lado a lado com o cosseno (a ordem muda: nota inclui a norma).
 
-Nada do `/lab` usa a GPU: a tabela de embeddings é lida do `model.safetensors` na CPU, então
-o laboratório funciona mesmo com outro trabalho na VRAM. Os passos ③–⑦ da esteira (RoPE/atenção,
-RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem como "em breve" — o ③ é o
-primeiro que vai precisar do modelo inteiro na GPU.
+- no passo ③ o modelo faz um **forward real** e a tela mostra os intermediários capturados:
+  o **relógio do RoPE** (os 32 ponteiros de um Q verdadeiro, girando em velocidades que caem de
+  1 volta a cada ~6 posições até ~47 mil, com um ponto verde que confere a rotação contra o Q
+  capturado), o **radar de atenção** do token escolhido (uma linha por cabeça, clique abre a
+  cabeça em detalhe) e a **matriz n×n com a máscara causal visível**.
+
+Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
+O ③ carrega o modelo no device do servidor — respeita o lock do chat (devolve aviso se ele está
+falando) e limita a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual (~0,7 s o
+forward de uma frase curta). Os passos ④–⑦ (RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem
+como "em breve" — o `capture` do ③ já entrega boa parte do que eles vão desenhar.
 Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 ## Aviso

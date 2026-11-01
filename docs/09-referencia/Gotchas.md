@@ -265,9 +265,18 @@ gerar, o chat continua em `montar_prompt()`; o lab é leitura, não geração.
 Primeiro cola na página, depois pinta (`pintarFaixa` depois do `appendChild`). Vale para o
 histograma e para o mapa de atenção do passo ③.
 
-**O modo didático não pode chamar `Server.carregar()`.** `carregar()` sobe o modelo para a
-VRAM — exatamente o que a regra do professor proíbe. As rotas `/api/lab/*` usam
-`tokenizador_de()` e `tabela_de()`, que ficam na CPU.
+**O modo didático não pode chamar `Server.carregar()` — exceto o passo ③, por contrato.**
+`carregar()` sobe o modelo para a VRAM — exatamente o que a regra do professor proíbe. As rotas
+`/api/lab/*` usam `tokenizador_de()` e `tabela_de()`, que ficam na CPU. A exceção deliberada é
+`/api/lab/attn|rope` → `Server.captura_atencao()`: carrega o modelo no device do servidor sob
+`gen_lock` (429 se o chat está gerando), teto de 64 tokens e cache de uma captura. Com o
+professor servindo, rode o servidor em `--device cpu` — o forward de 11 tokens leva 0,7 s.
+Nunca derrube o professor por conta própria.
+
+**O RoPE do Pingo não gira pares vizinhos de coordenadas.** Com `rotate_half` (estilo HF), o
+par que roda junto é **(xⱼ, xⱼ₊₃₂)** — 32 dimensões adiante, não (x₂ᵢ, x₂ᵢ₊₁). Um relógio que
+gire coordenadas adjacentes mostra outra matemática; no `/lab` o `head_dim/2` vem da captura e
+o teste de equivalência com o `RoPE` do modelo fecha a porta.
 
 ## Ver também
 

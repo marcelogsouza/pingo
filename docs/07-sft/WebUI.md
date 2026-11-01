@@ -88,7 +88,7 @@ vez de brigar por memória.
 - 120M erra fato com naturalidade ("São Paulo, no estado do Rio de Janeiro") e responde
   curto. A WebUI existe para **ver** isso, não para esconder.
 
-## Testes (27 casos, `tests/test_webui.py`)
+## Testes (30 casos, `tests/test_webui.py`)
 
 Sem rede e sem o tokenizer real: um checkpoint tiny + um tokenizer WordLevel de mentira. O
 que está travado: o **formato do prompt**, o **protocolo SSE** (`meta`/`delta`/`done`), o
@@ -98,10 +98,13 @@ incremental, a troca de modelo que descarrega o anterior e as rotas do laborató
 ## O modo didático (`/lab`)
 
 A segunda página do mesmo servidor: **tokenização colorida, ids, bytes e o vetor inicial de
-cada token** (passo ①) e, no passo ②, **a frase como matriz desenhada, as normas da tabela
-inteira e a tabela lida de volta** (o gancho do `lm_head` tied). Ela não usa GPU nem o lock de
-geração (lê `embed.weight` do `.safetensors` na CPU), então dá para abrir o laboratório
-enquanto o chat gera uma resposta. Nota completa: [[Modo didático]].
+cada token** (passo ①), **a frase como matriz desenhada, as normas da tabela inteira e a
+tabela lida de volta** (passo ②, o gancho do `lm_head` tied) e **o relógio do RoPE + os mapas
+de atenção por cabeça** (passo ③, com `capture` dos intermediários do forward). Os passos ①–②
+não usam GPU nem o lock de geração (lêem `embed.weight` do `.safetensors` na CPU), então dá
+para abrir o laboratório enquanto o chat gera. O ③ roda um forward real no device do servidor
+sob o `gen_lock` (a rota avisa se o chat está falando) e corta a frase em 64 tokens. Nota
+completa: [[Modo didático]].
 
 ## Ver também
 
