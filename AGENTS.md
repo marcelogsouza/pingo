@@ -21,8 +21,11 @@ steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente
 5,8–11,8× (B=16). **SFT concluído**: `runs/sft-120m-ep1/final/` (1 época, lr 5e-5) — formato
 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino **1,91×**. WebUI em Flask para conversar
 com ele e um **modo didático em `/lab`** (o curso: ① tokenização, ② embeddings, ③ RoPE +
-atenção, ④ RMSNorm + SwiGLU e ⑤ lm head — com Q/K, o bloco e os **logits reais**; ③, ④ e ⑤
-dividem UM forward, a captura serve os três). Suíte: **169 testes verdes**.
+atenção, ④ RMSNorm + SwiGLU, ⑤ lm head e **⑥ amostragem — a roleta** (fatias de 360° × p,
+girar com semente ou escolher o token na mão, e o desdobramento com `generate_stream` até o
+`<|end|>`); ⑥ e ③–⑤ dividem a captura, `pingo/generate.py` é a conta de verdade — e o top-p
+do `sample_next` foi **consertado** no caminho (cumsum em probabilidades; testes novos a
+travam). ⑦ por fazer. Suíte: **184 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
@@ -32,7 +35,7 @@ dividem UM forward, a captura serve os três). Suíte: **169 testes verdes**.
 | SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
 | avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
 | WebUI | `./scripts/webui.sh` (Ctrl+C desliga) → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming |
-| modo didático | mesma UI, rota **`/lab`** (lógica em `pingo/didatic.py`, página em `web/lab.html`) | ✅ passos ①–⑤; ⑥–⑦ por fazer — o `capture` já serve atenção, bloco **e** lm head; trocar camada no ④ custa 12 ms e posição no ⑤, 16 ms (a captura do ③ é a mesma, chave `modelo+ids`) |
+| modo didático | mesma UI, rota **`/lab`** (lógica em `pingo/didatic.py`, página em `web/lab.html`) | ✅ passos ①–⑥; ⑦ por fazer — o `capture` serve atenção, bloco, lm head **e roleta**; o ⑥ é stateless (o cliente manda a história; chave `modelo+ids`) e o `girar` na mesma frase é cache-hit (35 ms) |
 
 - **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas
   esquece o português (fator 6,94× contra 1,91×). Ficou como contraexemplo em
@@ -40,15 +43,15 @@ dividem UM forward, a captura serve os três). Suíte: **169 testes verdes**.
 - O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
 - Próximos, em `PLAN.md` (passo 12, com os critérios): SFT-5 (opcional, instruções gerais/
-  replay de texto), os passos ⑥–⑦ do modo didático (⑥ amostragem → ⑦ loop — os logits reais
-  já saem da captura do ⑤; a conta de amostragem está em `pingo/generate.py`, e o KV cache é
-  o `PingoCache` do ⑦) e Passo 8 (**350M — suspenso**).
+  replay de texto), o passo ⑦ do modo didático (loop + KV cache em cena — o ⑥ já gira a
+  roleta token a token e o desdobramento já usa `generate_stream`/`PingoCache`; falta mostrar
+  **o cache**: o que é reusado e o que é recomputado) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 
 1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
-2. `uv run pytest -q` → **169 verdes** (CPU, ~14 s).
+2. `uv run pytest -q` → **184 verdes** (CPU, ~14 s).
 3. `./scripts/webui.sh` (ou `uv run python scripts/webui.py`; o script derruba a instância
    anterior e desliga com Ctrl+C) e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
    imprime): se o chat responder, o modelo e a GPU estão de pé; `/lab` responde mesmo com a
@@ -70,13 +73,20 @@ dividem UM forward, a captura serve os três). Suíte: **169 testes verdes**.
   tokenizer invalidaria todos os `data/tokens/*.bin`.
 - **Nada de CUDA pesado com o professor servindo** (ele precisa da VRAM). O lab ①–② leem
   `embed.weight` do `model.safetensors` na CPU (`Server.tabela_de()`) e **nunca** chamam
-  `Server.carregar()`. A exceção deliberada são os passos ③–⑤ (`/api/lab/attn|rope|bloco|lmhead`
-  → `Server.captura_atencao()`): carregam o modelo no device do servidor sob
-  `gen_lock` (429 se o chat gera) e teto de 64 tokens — **um único forward serve os três**
-  (chave `modelo+ids`; a captura guarda também `nfinp/nfin` e os logits [64×16.387], ~4 MB).
-  Com o professor de pé, rode o servidor em `--device cpu` (0,66 s o forward de 11 tokens
-  a frio; na GPU livre, 0,64 s já com o load; trocar camada/cabeça em 4–12 ms e posição no
-  ⑤ em 16 ms pela captura em cache); nunca derrube o professor por conta própria.
+  `Server.carregar()`. A exceção deliberada são os passos ③–⑥ (`/api/lab/attn|rope|bloco|
+  lmhead|amostra` → `Server.captura_atencao()`, e `/api/lab/desdobrar` → `generate_stream`):
+  carregam o modelo no device do servidor sob `gen_lock` (429 se o chat gera) e tetos de
+  tokens — **um único forward serve ③, ④, ⑤ e o primeiro menu do ⑥** (chave `modelo+ids`; a
+  captura guarda também `nfinp/nfin` e os logits [n×16.387]). ③–⑤ limitam a 64 tokens; o ⑥
+  sobe o teto para 160 (`MAX_AMOSTRA_TOKENS`, frase + gerados) e é **stateless** — o cliente
+  manda a história inteira; `girar`/`forcar`/mexer nos sliders na mesma frase é cache-hit
+  (2–35 ms). Com o professor de pé, rode o servidor em `--device cpu` (0,66 s o forward de
+  11 tokens a frio, 0,07 s quente; desdobramento de ~30 tokens até o `<|end|>`, 0,64 s);
+  nunca derrube o professor por conta própria.
+- **A conta de amostragem é uma só** (`sample_next` no chat, `menu_amostra` no lab): o top-p
+  acumula **probabilidades**, não logits — o cumsum em logits que existia antes cortava tudo
+  com logit positivo (bug pego pela roleta do ⑥; `test_sample_next_top_p_e_nucleus_de_
+  probabilidade` e os testes do ⑥ travam a semântica). Não recriar um segundo filtro.
 - **Um escritor por saída.** Dois `gen_sft.py` no mesmo JSONL corrompem o arquivo; dois
   `train_sft.py` no mesmo `--out` idem. A WebUI também ocupa GPU: rode uma geração por vez.
 

@@ -4,13 +4,13 @@ etapa: 0
 atualizado: 2026-11-01
 ---
 
-# Modo didático (`/lab`) — passos ①–⑤: tokenização, embeddings, RoPE + atenção, bloco, lm head
+# Modo didático (`/lab`) — passos ①–⑥: tokenização, embeddings, RoPE + atenção, bloco, lm head, amostragem
 
 O Pingo é um **projeto-curso** ([[Visão e filosofia]]): o valor está tanto no modelo quanto em
 conseguir *mostrar* o que acontece dentro dele. O modo didático é a tela que faz isso — um
 "laboratório" na mesma WebUI, com uma esteira de etapas no topo (tokenização → embeddings →
-atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–⑤
-estão prontos, ⑥–⑦ aparecem marcados "em breve".
+atenção → MLP → lm head → amostragem → loop) que **funciona como abas**: os passos ①–⑥
+estão prontos, ⑦ aparece marcado "em breve".
 
 ```
 http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
@@ -76,6 +76,28 @@ escolhida e prova que a tabela é a mesma de onde o curso começou.
 | **os 10 que ganharam** | os candidatos que o passo ⑥ vai pesar; clicar num token abre a ficha dele — a mesma ficha/tabela do ①, fechando o ciclo do curso |
 | **o próximo token real: nota e posto** | professor-forcing honesto: "o que o modelo achava que vinha aqui" vs o que a frase tinha — em `Ġinvestir → até`, o sucessor real ficou em **5º de 16.387** |
 | **a mesma tabela lida duas vezes** | lado a lado: a prévia do ② (vetor inicial × tabela) e o logit real do ⑤ (vetor final × tabela) — se as ordens fossem iguais, as 12 camadas não teriam feito nada |
+
+## O que a tela faz (passo ⑥)
+
+Em palavras simples: o lm head deu notas, mas nota não é escolha. O passo ⑥ é a **roleta**:
+cada token do vocab recebe uma fatia de **360° × a sua probabilidade**, o aluno gira (o
+sorteio é o `torch.multinomial` do `sample_next` do servidor, não um `Math.random` da
+página) ou **escolhe o token com a mão** — e o card do **desdobramento** mostra onde aquela
+escolha vai dar, deixando o modelo girar sozinho até o `<|end|>`.
+
+| elemento | por quê |
+|---|---|
+| **sliders T / top-k / top-p / penalidade + semente** | os filtros do chat, na tela do curso; mexer num slider refaz a roda em ~2 ms (a captura está em cache) — o efeito aparece na hora. A semente torna o giro **reproduzível**: mesma semente, mesmo token |
+| **a roleta (canvas)** | a distribuição de UM token desenhada em graus; o ponteiro dourado em cima, a roda gira ~2 voltas e para na fatia sorteada; cada fatia grande mostra o token e o %; o resto vira a **fatia cinza** `+N tokens` — e a soma dos graus fecha em 360° (teste) |
+| **o cardápio clicável** | os 24 primeiros candidatos com logit, probabilidade e **graus**; clicar **força** o token na história — inclusive um cortado pelo filtro (fatia 0°, o `p_bruto` conta a história, e o posto denuncia: rank > retidos) |
+| **a história com 🎲/✋** | cada token gerado volta como entrada (é o ⑦ em embrião) com a marca de quem escolheu; desfazer/recomeçar deixam navegar a árvore |
+| **o desdobramento** | `generate_stream` puro (KV cache incluso) dali para frente, com os MESMOS parâmetros: o card mostra o que a escolha puxa até o `<\|end\|>` ou o teto — é o "mostro um passo, mas conto o que vem depois" |
+| **fim honesto** | se o sorteado for `<|end|>` (id 16.386), a roda para com o aviso — foi o SFT que ensinou isso |
+
+É a única aba que **escreve** estado no servidor (uma captura nova por posição), mas não
+segura sessão entre requests: a roleta é *stateless* — o cliente manda a história inteira e
+a `captura_atencao` (chave `modelo+ids`) faz o resto do cache. Entrar no ⑤ com a mesma frase
+não refaz o forward nenhum, e vice-versa.
 
 ## As dez decisões que importam
 
@@ -211,11 +233,23 @@ POST /api/lab/lmhead {modelo, ids[], i, k?}      // ⑤: a MESMA captura do ③ 
       top:[{id, token, texto, logit}],                   // os k (10) maiores logits
       proximo:{id, token, texto, logit, rank}|None,      // o sucessor real na frase (⑥ pide)
       faixa[bins], escala, estat:{media,min,max,std}, norma:{maior_x2, maior_nfin}}
+POST /api/lab/amostra {modelo, ids[], acao:menu|girar|forcar, token?, temperature?, top_k?,
+                        top_p?, repetition_penalty?, seed?}   // ⑥: a MESMA captura (gen_lock!)
+   → {modelo, n, cortado_em, acao, vocab, retidos, p_retidos,
+      filtros:{temperatura, top_k, top_p, repeticao}, semente?,
+      candidatos:[{id, rank, token, texto, kind, logit, prob, graus, p_bruto}],
+      outros:{n, prob, graus}|None, maior:{…},
+      sorteado:{modo:roleta|mão, dentro, …}|None, end_id?}   // end_id só em giro/forço, no SFT
+POST /api/lab/desdobrar {modelo, ids[], max_new_tokens?(≤96), …mesmos parâmetros}
+   → {modelo, parada:max_tokens|end_token, n_novos, segundos, texto,   // generate_stream puro
+      tokens:[{id, token, texto}]}
 ```
 
 Tetos: 4.000 caracteres no pedido, 512 chips desenhados (`cortado_em` avisa), 96 linhas de
-matriz (`MATRIZ_LINHAS`) e 64 tokens na captura do forward (`MAX_ATTN_TOKENS`; ③, ④ e ⑤
-dividem o teto e a captura). A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU);
+matriz (`MATRIZ_LINHAS`) e 64 tokens na captura de atenção (`MAX_ATTN_TOKENS`; ③, ④ e ⑤
+dividem o teto e a captura). O ⑥ sobe o teto da captura para **160 tokens** entre frase e
+gerados (`MAX_AMOSTRA_TOKENS`) e o desdobramento a 96 novos — a captura do ⑥ é a mesma do
+③–⑤, só com chave maior. A lógica toda mora em `pingo/didatic.py` (puro, testado em CPU);
 a página é `web/lab.html`; as rotas em `scripts/webui.py` são finas.
 
 ## O que os números reais do Pingo mostram nesta tela
@@ -317,14 +351,46 @@ captura em cache; `MAX_ATTN_TOKENS` continua 64):
   (vetor inicial) é *ele mesmo* (1,027 = ‖e‖²); no vetor final (⑤) o campeão é outro mundo
   (`ĠR`, 11,88). As camadas não criaram pesos novos: mexeram no vetor.
 
+No passo ⑥ (medidos no mesmo checkpoint e na mesma frase, com o servidor em `--device cpu` e
+o professor de pé — o modelo tiny de teste da suíte também exercita as duas rotas):
+
+- **a roda fecha**: no cardápio do `<|assistant|>` final (T=1, sem filtro), os 24 candidatos
+  + a fatia cinza somam **360,02°** (o erro é dos graus arredondados). O campeão `A` leva
+  **285,4°** de 360° (p 0,793, logit 13,34 — o mesmo logit que o ⑤ anunciou); `O` leva
+  18,8°, `Não` 15,2°, e os **16.363 restantes cabem em 8,1°** de fatia cinza. A pergunta
+  pronta para o aluno: *quantos tokens cabem naquela fatia que mal se vê?*
+- **o filtro visto na roda**: T=0,7 + top-p 0,9 → **retidos 1** — com a temperatura afiada, o
+  nucleus do campeão já soma 0,93 sozinho e a roleta vira uma fatia só (a lição de que
+  temperatura e top-p agem *em conjunto*, não cada um no seu quadrado). Forçar `Ġinvestir`
+  (id 4.560) com top-k=3: fatia 0°, `prob` 0, mas `p_bruto` 8×10⁻⁶ e posto 4 — a tela mostra
+  o token *morreu no filtro, não no sorteio*.
+- **velocidade** (CPU, professor ocupando a VRAM): primeiro menu 0,07 s (forward+captura de
+  11 tokens quentes); **girar 35 ms** (a captura do ⑤ está em cache, chave `modelo+ids`);
+  mexer nos sliders **2 ms** (só re-faz o softmax sobre os 16.387 — a roda acompanha o dedo);
+  menu da posição seguinte 0,07 s (forward novo de 12 tokens). Desdobramento greedy de 32
+  novos: parou no `<|end|>` com **29 tokens em 0,64 s** — o KV cache carregando a história.
+- **a história que o modelo contou sozinho**: girando T=0,7/top-p 0,9 e depois desdobrando
+  com penalidade 1,15, da pergunta `Quanto a Companhia vai investir até 2028?` saiu
+  `A Companhia de Assistência Técnica e Extensão Rural do Maranhão (Cedae) vai investir
+  R$ 1,5 milhão em 2027.<|end|>` — e com o `<|end|>` sorteado no loop interativo a roda
+  fecha com o aviso, exatamente como no chat.
+- **bug consertado a caminho do ⑥**: o `sample_next` fazia o acumulado do top-p sobre os
+  **logits**, não sobre as **probabilidades** — com logit positivo, `top_p=0,9` cortava tudo
+  menos o favorito (com negativo, não cortava nada). A roleta obrigou a conta certa; o chat
+  (que passava `top_p` do slider direto para o `sample_next`) ganhou filtro de verdade. O
+  teste `test_sample_next_top_p_e_nucleus_de_probabilidade` (em `test_model.py`) trava o
+  nucleus {0,1} de uma linha em que o jeito velho devolveria só {0}. O padrão do chat
+  (`top_p=1`) nunca era afetado — os runs e o relatório de 2,507 não mudam.
+
 ## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
 
-`⑥ amostragem` — softmax, temperatura, top-k/top-p e o porquê do `repetition_penalty` no
-120M (os logits reais do ⑤ já são a matéria-prima; `generate_stream` tem a conta toda) ·
-`⑦ loop` — o token escolhido volta como entrada; KV cache em ação. O andaime do ③–⑤ já
-resolveu a parte difícil: o `capture` entrega os intermediários, e as rotas que carregam o
-modelo já sabem obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com
-o professor servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com
+`⑦ loop` — o token escolhido volta como entrada e o **KV cache** entra em cena de verdade: o
+⑥ já mostra a história crescendo token a token (com `generate_stream` no desdobramento — a
+conta e o cache estão prontos e testados); falta o passo didático de mostrar o *cache* — o
+que o modelo reusa e o que ele recomputa a cada token novo. O andaime do ③–⑥ já resolveu a
+parte difícil: o `capture` entrega os intermediários, e as rotas que carregam o modelo já
+sabem obedecer ao `gen_lock` com teto de tokens. O GPU pesado continua proibido com o
+professor servindo ([[Infra e GPU]]): a prática é `--device cpu` ou desligar o Strata com
 aviso antes.
 
 ## Ver também

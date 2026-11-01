@@ -103,12 +103,16 @@ A segunda página do mesmo servidor: **tokenização colorida, ids, bytes e o ve
 cada token** (passo ①), **a frase como matriz desenhada, as normas da tabela inteira e a
 tabela lida de volta** (passo ②, o gancho do `lm_head` tied), **o relógio do RoPE + os mapas
 de atenção por cabeça** (passo ③, com `capture` dos intermediários do forward), **a régua do
-RMSNorm + as portas do SwiGLU** (passo ④) e **a norm final + os 16.387 logits reais da
-posição escolhida** (passo ⑤ — o lm head é a própria tabela do ①, tied). Os passos ①–②
+RMSNorm + as portas do SwiGLU** (passo ④), **a norm final + os 16.387 logits reais da
+posição escolhida** (passo ⑤ — o lm head é a própria tabela do ①, tied) e **a roleta da
+amostragem** (passo ⑥ — fatias de 360° × probabilidade, giro com semente ou escolha do token
+na mão, e o desdobramento com `generate_stream` até o `<|end|>`; a conta é a mesma do
+`sample_next` do chat). Os passos ①–②
 não usam GPU nem o lock de geração (lêem `embed.weight` do `.safetensors` na CPU), então dá
 para abrir o laboratório enquanto o chat gera. O ③ roda o único forward real no device do
 servidor sob o `gen_lock` (as rotas avisam se o chat está falando) e corta a frase em 64
-tokens; ④ e ⑤ pegam carona na mesma captura. Nota completa: [[Modo didático]].
+tokens; ④, ⑤ e ⑥ pegam carona na mesma captura (o ⑥ sobe o teto para 160 tokens entre frase
+e gerados, e é stateless: a história vai inteira em cada request). Nota completa: [[Modo didático]].
 
 ## Ver também
 

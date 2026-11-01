@@ -286,13 +286,27 @@ fixá-las em teste precisa esperar as famílias (o teste fixa os conjuntos intei
 propósito: crescer a carona é decisão consciente, não acidente — e o `nfinp/nfin` fora do
 último bloco seria um bug silencioso).
 
-**A captura serve ③, ④ e ⑤, mas há UMA vaga.** `Server._captura` guarda o último forward
+**A captura serve ③, ④, ⑤ e ⑥, mas há UMA vaga.** `Server._captura` guarda o último forward
 (chave `modelo+ids`, ~60 MB de tensores fp32 com 64 tokens, já contando os logits
 `[64×16.387]` ≈ 4 MB que o ⑤ consome). Duas abas com frases diferentes se calcaram: cada
-troca refaz o forward. Trocar camada/cabeça/token/posição na MESMA frase é de graça (4–16 ms).
-Os logits do ⑤ são os do **próprio forward** (`out.logits`), não uma recomputação: se alguém
-"otimizar" o `captura_atencao` chamando o modelo sem guardar a saída, a aba ⑤ desenha número
-inventado e nada quebra no resto — só a aula.
+troca refaz o forward. Trocar camada/cabeça/token/posição na MESMA frase é de graça (4–16 ms)
+— e é por isso que o ⑥ não precisa de sessão: o `girar` com a mesma `modelo+ids` do ⑤ é um
+cache-hit (35 ms). Com o ⑥ a vaga também serve chaves de até **160 tokens**
+(`MAX_AMOSTRA_TOKENS`; ~17 MB de `w` + 10 MB de logits — ainda cabe folgado). Os logits do ⑤
+e do ⑥ são os do **próprio forward** (`out.logits`), não uma recomputação: se alguém
+"otimizar" o `captura_atencao` chamando o modelo sem guardar a saída, as abas desenham
+número inventado e nada quebra no resto — só a aula.
+
+**O top-p do `sample_next` já foi um bug — a roleta do ⑥ é que o pegou.** O nucleus fazia
+`cumsum` sobre os **logits** ordenados, não sobre as **probabilidades**: com o logit do
+favorito ≥ `top_p` (o caso normal — logits vão a 13), a conta `cumsum − self < p` cortava
+**tudo** menos o primeiro; com logits todos negativos, não cortava nada. O padrão do chat
+(`top_p=1`) nunca ativava o ramo, e os testes só cobriam greedy/top-k — o filtro atravessou
+todos os runs assim. Hoje as duas pontas (chat e roleta) compartilham a conta certa —
+cumsum sobre `softmax` — e `test_sample_next_top_p_e_nucleus_de_probabilidade` +
+`test_menu_amostra_o_filtro_da_sementeira_como_sample_next` não deixam voltar. Lição
+prática: filter de amostragem sem teste estatístico é enfeite; comparar a sementeira com a
+tela foi o que expôs a diferença.
 
 ## Ver também
 
