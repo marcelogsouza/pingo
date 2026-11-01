@@ -67,22 +67,23 @@ dedup exato por hash de doc) → parquet em `data/raw/`.
 
 ```
 pingo/
-├── pyproject.toml            # uv; deps: torch, transformers, tokenizers, datasets, numpy, tqdm, pyarrow
-├── data/                     # raw (parquet) + tokens (.bin uint16 + meta.json) — fora do git
+├── pyproject.toml            # uv; deps: torch, transformers, tokenizers, datasets, numpy, tqdm,
+│                             #     pyarrow, zstandard, flask, safetensors
+├── data/                     # raw (parquet) + tokens (.bin uint16 + meta.json) + sft (jsonl) — fora do git
 ├── tokenizer/                # tokenizer.json treinado por nós + vocab stats
 ├── pingo/                    # pacote python
 │   ├── config.py             # PingoConfig(PretrainedConfig)
 │   ├── model.py              # RMSNorm, RoPE, Attention(+KV cache), MLP, PingoLM(PreTrainedModel)
 │   ├── cache.py              # PingoCache
-│   ├── generate.py           # sampling: temperature, top-k, top-p, greedy
-│   └── data.py               # DataLoader memmap sobre shards .bin
-├── scripts/
-│   ├── download_data.py      # OSCAR pt (+ wiki) → data/raw
-│   ├── train_tokenizer.py    # BPE byte-level 16k
-│   ├── prepare_tokens.py     # parquet → shards binários train/val
-│   ├── train.py              # loop de pré-treino
-│   └── sample.py             # geração + REPL interativo
-└── tests/                    # shapes, contagem de params, equivalência do KV cache, overfit
+│   ├── generate.py           # sampling (temp, top-k, top-p, greedy) + `generate_stream`
+│   ├── data.py               # DataLoader memmap sobre shards .bin
+│   ├── sft.py                # contrato do exemplo de SFT, tokens de chat, heurística de pt
+│   └── didatic.py            # modo didático: tokenização categorizada + embeddings na CPU
+├── web/lab.html              # a página do modo didático (`/lab`)
+├── scripts/                  # download_data, train_tokenizer, prepare_tokens, train, sample,
+│                             #   gen_sft, validate_sft, train_sft, eval_sft, webui
+├── docs/                     # vault Obsidian: como cada coisa foi feita e por quê
+└── tests/                    # shapes, params, KV cache, overfit, SFT, WebUI, modo didático
 ```
 
 ## Passo a passo (cada passo entregável e verificável)
@@ -107,9 +108,17 @@ pingo/
 ## Próximos passos (fora do escopo da Fase 1)
 
 8. **Escalar o porte** — repetir o pipeline com **Pingo-350M** (já na tabela de configs) e mais tokens.
-9. **Mid-training / SFT** — dataset de instruções pt (ex.: datasets pt-BR de instruções no HF).
+9. **Mid-training / SFT** — dataset de instruções pt (ex.: datasets pt-BR de instruções no HF). ✔ *feito em 2026-10-30/31: SFT-1..4 + 30k pares; o run que vale é `runs/sft-120m-ep1`.*
 10. **RLHF** — começar com **DPO** (dados de preferência pt-BR já existem, ex.: `Hub-Ai/ptbr-human-preferences`); PPO + reward model como opção avançada.
 11. **Avaliação formal** — benchmarks pt (ex.: tarefas estilo NeurIPS-BR-LP, hellaswag-pt).
+12. **Modo didático (`/lab`)** — mostrar o modelo por dentro, etapa por etapa, na mesma WebUI. **Passo 1 ✔ entregue** (tokenização: chips coloridos com id, superfície byte-level, bytes, a ficha do token com os 896 números do embedding e os vizinhos por cosseno). ✔ Critério do passo 1: rodar **sem GPU** (lê `embed.weight` do `.safetensors` na CPU) e responder com o professor servindo na VRAM. Restante da esteira, cada uma com um forward que devolve os intermediários:
+    - **② embedding** — o id → vetor, e a norma/como a tabela é usada também no `lm_head` (tied).
+    - **③ RoPE + atenção** — Q/K/V, o ângulo da RoPE por posição e o mapa de atenção do último token (o slide mais esperado).
+    - **④ RMSNorm + SwiGLU** — o resto do bloco; comparação antes/depois da normalização.
+    - **⑤ lm head** — os 16.387 logits, a mesma tabela do passo 1.
+    - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.
+    - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação.
+    - Critério geral: nada de GPU até a etapa ②; a partir daí, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM.
 
 ## Decisões fechadas ✔
 

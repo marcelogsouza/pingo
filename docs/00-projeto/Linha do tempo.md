@@ -1,7 +1,7 @@
 ---
 tags: [pingo, projeto, historia, git]
 etapa: 0
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # Linha do tempo
@@ -71,9 +71,11 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 
 | Hora | Commit | O que aconteceu |
 |---|---|---|
-| — | — | **Modo didático** em `/lab`: tokenização colorida (id, superfície byte-level, bytes), ficha do token com a faixa dos 896 números e os vizinhos por cosseno, busca no vocab ([[Modo didático]]) |
-| — | — | A tabela de embeddings passa a ser lida **direto do `model.safetensors` na CPU** (58 MB) — o lab roda sem encostar na VRAM do professor |
-| — | — | Suíte: **140 casos** (`pingo/didatic.py` novo, +13; WebUI 22) |
+| 12:06 | `f0c8899` | **Modo didático** em `/lab`: tokenização colorida (id, superfície byte-level, bytes), ficha do token com a faixa dos 896 números e os vizinhos por cosseno, busca no vocab ([[Modo didático]]) |
+| 12:07 | `e9e4352` | nota nova no vault + estado (índice, grafo, linha do tempo, 6 gotchas) |
+| 12:20 | `9402fe9` | o lab passa a envolver o texto **só** com `<\|user\|>…<\|assistant\|>` (sem o `Pergunta:` do dataset) — revelou que `Quanto` (6.666) e `ĠQuanto` (8.579) são tokens diferentes: o espaço faz parte do token |
+| — | — | A tabela de embeddings passou a ser lida **direto do `model.safetensors` na CPU** (58 MB) — o lab roda sem encostar na VRAM do professor |
+| — | — | Suíte: **141 casos** em 12 arquivos (`pingo/didatic.py` novo, +13; WebUI 23) |
 
 O passo 1 de uma esteira de sete (tokenização → embedding → RoPE/atenção → MLP → lm head →
 amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar o

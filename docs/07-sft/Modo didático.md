@@ -28,7 +28,7 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 | **busca no vocab** | digita `4560`, `ção` ou `Ã§Ã£o` e cai na mesma ficha |
 | debounce de 250 ms | o aluno tokeniza enquanto digita; nada de botão "processar" |
 
-## As três decisões que importam
+## As quatro decisões que importam
 
 **1. Superfície ≠ texto.** Num BPE byte-level o token é uma sequência de *bytes*: o vocab
 guarda `ĠatÃ©`, o humano lê ` até`. As duas aparecem na tela, lado a lado, porque é ali que o
@@ -45,12 +45,12 @@ i   id  categoria    superfície   bytes                texto
 ```
 
 **2. O laboratório não encosta na GPU.** A ficha do token precisa da tabela de embeddings, e
-o [[KV cache|modelo]] mora na VRAM disputada com o Strata. Então
+o modelo mora na VRAM disputada com o Strata. Então
 `TabelaEmbeddings.do_checkpoint()` lê **só a chave `embed.weight`** do `model.safetensors`
 na CPU — 58 MB, ~0,1 s — e indexa `id → token`. Consequências boas: o lab funciona com o
 professor servindo, funciona na M4, não precisa do `gen_lock` (dá para abrir o lab enquanto
-uma resposta é gerada no chat) e o `lm_head` ser a *mesma matriz* ([[Inicialização e
-embeddings tied]]) deixa o passo 5 do curso já anunciado no passo 1.
+uma resposta é gerada no chat) e o `lm_head` ser a *mesma matriz*
+([[Inicialização e embeddings tied]]) deixa o passo 5 do curso já anunciado no passo 1.
 
 **3. O lab mostra o invólucro, não o prompt do treino.** `montar_prompt_lab()` devolve
 `<|user|>texto<|assistant|>` — **sem o `Pergunta: `** que o dataset ensinou. É de propósito: o
@@ -90,8 +90,9 @@ Medidos em `runs/sft-120m-ep1/final` (tabela fp32, 16.387 × 896):
 
 - **vizinhos de `Ġinvestir`**: `Ġapostar` 0,45 · `Ġgastar` 0,42 · `Ġcomprar` 0,41 ·
   `Ġcontratar` 0,37 · `Ġinvestimento` 0,36. Os de `Ġpresidente`: `ĠPresidente` 0,53 ·
-  `Ġprefeito` 0,45 · `Ġdiretor` 0,44 · `Ġsecretário` 0,42 · `Ġministro` 0,41. É o slide que
-  fecha o passo 1.
+  `Ġprefeito` 0,45 · `Ġdiretor` 0,44 · `Ġsecretário` 0,42 · `Ġministro` 0,41. Os de `ĠJoão`:
+  `ĠPedro` 0,43 · `João` 0,42 · `ĠJosé` 0,40 · `ĠPaulo` 0,35 · `ĠTiago` 0,33. É o slide que
+  fecha o passo 1 — e repare que `João` sem espaço é outro token, logo ao lado.
 - **custo do acento**: `até` é 1 token; `É` sozinho virou `ĠÃī` (espaço + 2 bytes); `≈`
   virou **3 tokens de byte puro** (`â`,`ī`,`Ī`). A barra de avisos da tela conta isso sozinha
   (`bytes > chars` ⇒ "acento em UTF-8 não é um símbolo só").
@@ -101,7 +102,7 @@ Medidos em `runs/sft-120m-ep1/final` (tabela fp32, 16.387 × 896):
   o porquê da [[Avaliação SFT|recusa fraca]] sem dizer uma palavra de loss.
 - `Ċ` (quebra de linha) tem `<|eos|>` como vizinho nº 1 (0,35) — outro bom achado para aula.
 
-## Próximas etapas da esteira (ainda não implementadas)
+## Próximas etapas da esteira (critérios no `PLAN.md`, passo 12)
 
 `② embedding (896)` · `③ RoPE + atenção` · `④ RMSNorm + SwiGLU` · `⑤ lm head — a mesma
 tabela` · `⑥ amostragem` · `⑦ loop`. As etapas ③ em diante vão precisar de *forward com

@@ -88,7 +88,7 @@ vez de brigar por memória.
 - 120M erra fato com naturalidade ("São Paulo, no estado do Rio de Janeiro") e responde
   curto. A WebUI existe para **ver** isso, não para esconder.
 
-## Testes (22 casos, `tests/test_webui.py`)
+## Testes (23 casos, `tests/test_webui.py`)
 
 Sem rede e sem o tokenizer real: um checkpoint tiny + um tokenizer WordLevel de mentira. O
 que está travado: o **formato do prompt**, o **protocolo SSE** (`meta`/`delta`/`done`), o

@@ -134,5 +134,6 @@ Salvos via `PreTrainedTokenizerFast(...).save_pretrained(tokenizer/)` — o mesm
 
 - [[Métricas de compressão]] — o resultado medido
 - [[Binarização e shards]] — onde o tokenizer é aplicado
+- [[Modo didático]] — o `/lab` mostra este tokenizer funcionando: chips, ids e bytes
 - [[Gotchas]] — `BpeTrainer` não aceita `workers`/`chunk_size`
 - [[Pingo]] — voltar ao índice

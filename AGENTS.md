@@ -21,7 +21,7 @@ steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente
 5,8–11,8× (B=16). **SFT concluído**: `runs/sft-120m-ep1/final/` (1 época, lr 5e-5) — formato
 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino **1,91×**. WebUI em Flask para conversar
 com ele e um **modo didático em `/lab`** (o curso: tokenização colorida + embeddings
-iniciais). Suíte: **140 testes verdes**.
+iniciais). Suíte: **141 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
@@ -38,9 +38,9 @@ iniciais). Suíte: **140 testes verdes**.
   `docs/07-sft/Run do SFT-120M.md`.
 - O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
-- Próximos, em `PLAN.md`: SFT-5 (opcional, instruções gerais/replay de texto), os passos 2–7
-  do modo didático (embedding → RoPE/atenção → MLP → lm head → amostragem → loop) e Passo 8
-  (**350M — suspenso**).
+- Próximos, em `PLAN.md` (passo 12, com os critérios): SFT-5 (opcional, instruções gerais/
+  replay de texto), os passos ②–⑦ do modo didático (② embedding → ③ RoPE/atenção →
+  ④ RMSNorm/SwiGLU → ⑤ lm head → ⑥ amostragem → ⑦ loop) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 

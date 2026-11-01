@@ -126,7 +126,7 @@ flowchart LR
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
-- [[Suíte de testes]] — 140 testes, e o que cada um protege
+- [[Suíte de testes]] — 141 testes, e o que cada um protege
 
 ### 09 — Referência
 - [[Glossário]] — todo jargão que aparece no vault
