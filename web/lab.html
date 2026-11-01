@@ -61,12 +61,9 @@
     border-radius:11px;padding:11px 13px;font:14.5px/1.55 inherit;outline:none;resize:vertical;
     min-height:70px}
   textarea#q:focus{border-color:#33507f;box-shadow:0 0 0 3px rgba(59,123,251,.12)}
+  code{font:12.5px var(--mono);color:var(--muted);background:var(--bg2);padding:1px 5px;
+    border-radius:5px;border:1px solid var(--line)}
   .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:11px}
-  .seg{display:flex;gap:3px;padding:3px;background:var(--bg2);border:1px solid var(--line);
-    border-radius:10px}
-  .seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;
-    padding:6px 11px;border-radius:7px;cursor:pointer}
-  .seg button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
   .chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:7px 12px;
     border-radius:999px;font-size:12.5px;cursor:pointer;transition:.15s}
   .chip:hover{color:var(--text);border-color:var(--line2);transform:translateY(-1px)}
@@ -188,15 +185,13 @@
 
   <section class="card">
     <h2>1 · Tokenização — o que o modelo realmente recebe</h2>
-    <p class="hint">Escreva abaixo. Cada pílula colorida é <b>um token</b>: o que o modelo vê
-      não são letras, são números da tabela de 16 mil pedaços.</p>
+    <p class="hint">Escreva abaixo: seu texto entra cercado pelos tokens de chat
+      (<code>&lt;|user|&gt;</code> … <code>&lt;|assistant|&gt;</code>) e cada pílula colorida é
+      <b>um token</b> — o que o modelo vê não são letras, são números da tabela de 16 mil
+      pedaços. No chat o texto ainda chega com <code>Pergunta:&nbsp;</code> na frente (foi
+      assim que o modelo treinou); aqui mostramos só o invólucro, sem o rótulo.</p>
     <textarea id="q" spellcheck="false">Quanto a Companhia vai investir até 2028?</textarea>
     <div class="row">
-      <div class="seg" id="modo">
-        <button data-cru="0" class="on">o prompt do chat</button>
-        <button data-cru="1">só o meu texto</button>
-      </div>
-      <div class="spacer" style="flex:1"></div>
       <span id="exemplos" style="display:flex;gap:7px;flex-wrap:wrap"></span>
     </div>
     <div class="medidor" id="medidor"></div>
@@ -265,7 +260,7 @@ const EXEMPLOS = [
   "Olá, São João — não é o são João.",
   "O preço foi R$ 1.234,56 (≈ 3% do PIB).",
 ];
-const state = {modelos: [], modelo: null, cru: false, filtro: null,
+const state = {modelos: [], modelo: null, filtro: null, chat: true,
                tokens: [], resumo: null, prompt: '', sel: null};
 
 const fmt = n => n.toLocaleString('pt-BR');
@@ -322,27 +317,15 @@ async function tokenizar(){
   try {
     r = await fetch('/api/lab/tokenize', {method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({texto, modelo: state.modelo, cru: state.cru})});
+      body: JSON.stringify({texto, modelo: state.modelo})});
   } catch (e) { erro('servidor fora do ar: ' + e.message); return; }
   const dados = await r.json();
   if (!r.ok){ erro(dados.erro || `HTTP ${r.status}`); return; }
   limpaErro();
   state.tokens = dados.tokens; state.resumo = dados.resumo;
-  state.prompt = dados.prompt; state.cruReal = dados.cru;
-  sincronizarModo(dados.cru);
+  state.prompt = dados.prompt; state.chat = dados.chat;
   fecharFicha();
   desenharTudo(dados);
-}
-
-/* O base não tem prompt de chat: o servidor sempre força o texto cru. A tela acompanha,
-   em vez de deixar o botão "prompt do chat" aceso mentindo para o aluno. */
-function sincronizarModo(cru){
-  [...$('#modo').children].forEach(b => {
-    const quer = b.dataset.cru === '1';
-    b.classList.toggle('on', quer === cru);
-    b.disabled = (b.dataset.cru === '0' && cru && !state.cru);
-    b.title = b.disabled ? 'o modelo base não conhece tokens de chat' : '';
-  });
 }
 
 function desenharTudo(dados){
@@ -385,10 +368,11 @@ function desenharTokens(){
     b.onclick = () => abrirFicha(t, b);
     box.appendChild(b);
   });
-  $('#hint2').textContent = state.cruReal
-    ? 'Estes são os tokens do seu texto puro — é o que o modelo base recebe.'
-    : 'O azul-violeta no começo e no fim são os tokens de chat: foi o que o SFT ensinou o '
-      + 'modelo a reconhecer. Eles são tokens de verdade, com id na mesma tabela.';
+  $('#hint2').textContent = state.chat
+    ? 'O azul-violeta no começo e no fim são os tokens de chat: foi o que o SFT ensinou o '
+      + 'modelo a reconhecer. Eles são tokens de verdade, com id na mesma tabela.'
+    : 'O modelo base não conhece tokens de chat — o vocab dele (16.384) não tem `<|user|>`, '
+      + 'então ele recebe o texto puro e só continua o que veio.';
 }
 
 function desenharLegenda(s){
@@ -428,9 +412,9 @@ function desenharAvisos(dados, s){
   if (s.repetidos)
     add(`<b>${s.repetidos} repetições.</b> O modelo não reconhece a palavra: ele vê o <i>mesmo `
       + `número</i> de novo. É assim que uma frase de 200 palavras custa 200 posições do contexto.`);
-  if (!s.por_categoria['especial'] && !state.cru)
-    add('Este é o modelo <b>base</b>: ele não conhece tokens de chat, só continua o texto — '
-      + 'por isso não há violeta aqui.');
+  if (!dados.chat)
+    add('O <b>base</b> não conhece tokens de chat: o vocab dele (16.384) não tem '
+      + '<code>&lt;|user|&gt;</code>, então ele recebe o texto puro e só continua o que veio.');
 }
 /* ---------------------------------------------------------------- ficha */
 const cacheFicha = new Map();
@@ -571,12 +555,6 @@ async function procurar(){
 
 /* ---------------------------------------------------------------- eventos */
 $('#q').addEventListener('input', aoEscrever);
-$('#modo').onclick = (ev) => {
-  const b = ev.target.closest('button'); if (!b) return;
-  state.cru = b.dataset.cru === '1';
-  [...$('#modo').children].forEach(x => x.classList.toggle('on', x === b));
-  tokenizar();
-};
 EXEMPLOS.forEach(t => {
   const b = document.createElement('button');
   b.className = 'chip';

@@ -254,6 +254,11 @@ a ficha com a tabela do outro mostra o vetor errado **sem erro nenhum** — por 
 **O `save_pretrained` do HF v5 grava só `embed.weight`.** O `lm_head` é *tied*, não duplicado:
 a tabela que o laboratório desenha é essa chave do `model.safetensors` (58 MB em fp32).
 
+**O `/lab` não usa o prompt do treino.** Ele mostra `<|user|>texto<|assistant|>`, sem o
+`Pergunta: ` do dataset — e por isso a primeira palavra cai num id diferente do que o
+chat manda (`Quanto` 6.666 × `ĠQuanto` 8.579): **o espaço faz parte do token**. Para
+gerar, o chat continua em `montar_prompt()`; o lab é leitura, não geração.
+
 **O modo didático não pode chamar `Server.carregar()`.** `carregar()` sobe o modelo para a
 VRAM — exatamente o que a regra do professor proíbe. As rotas `/api/lab/*` usam
 `tokenizador_de()` e `tabela_de()`, que ficam na CPU.

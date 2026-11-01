@@ -230,13 +230,13 @@ def test_prompt_maior_que_o_contexto_devolve_400(tmp_path):
 # ------------------------------------------------------------------ laboratório (modo didático)
 
 
-def test_lab_tokeniza_o_prompt_do_treino(ambiente):
+def test_lab_enolve_o_texto_com_os_tokens_de_chat(ambiente):
     cliente, servidor = ambiente
     r = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "modelo": "sft"})
     assert r.status_code == 200
     d = r.get_json()
-    assert d["prompt"] == f"{USER_TOKEN}Pergunta: oi mundo{ASSISTANT_TOKEN}"
-    assert d["cru"] is False and d["modelo"] == "sft"
+    assert d["prompt"] == f"{USER_TOKEN}oi mundo{ASSISTANT_TOKEN}"   # sem o "Pergunta:"
+    assert d["chat"] is True and d["modelo"] == "sft"
     ids = servidor.tokenizador_de("sft").encode(d["prompt"], add_special_tokens=False).ids
     assert [t["id"] for t in d["tokens"]] == ids      # a tela mostra exatamente o encode()
     assert d["resumo"]["n_tokens"] == len(ids) and d["resumo"]["vocab"] == len(VOCAB)
@@ -247,11 +247,28 @@ def test_lab_tokeniza_o_prompt_do_treino(ambiente):
                if t["repetido"] is not None)
 
 
-def test_lab_no_texto_cru_nao_ha_tokens_de_chat(ambiente):
-    cliente, _ = ambiente
-    d = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "cru": True}).get_json()
-    assert d["prompt"] == "oi mundo" and d["cru"] is True
-    assert d["resumo"]["especiais"] == 0
+def test_montar_prompt_lab_e_so_o_involucao_o_chat_mantem_o_rotulo():
+    assert w.montar_prompt_lab("oi mundo") == f"{USER_TOKEN}oi mundo{ASSISTANT_TOKEN}"
+    assert w.montar_prompt_lab("Era uma vez", instrucao=False) == "Era uma vez"
+    # o lab mostra o invólucro; o chat continua mandando o formato do treino
+    assert w.montar_prompt("oi mundo") == f"{USER_TOKEN}Pergunta: oi mundo{ASSISTANT_TOKEN}"
+
+
+def test_lab_do_base_nao_recebe_tokens_de_chat(tmp_path):
+    d = _checkpoint(tmp_path)
+    servidor = w.Server([w.ModelSpec("sft", "SFT", d, True),
+                         w.ModelSpec("base", "Base", d, False)], device="cpu")
+    app = w.create_app(servidor)
+    app.config.update(TESTING=True)
+    cliente = app.test_client()
+    base = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "modelo": "base"}).get_json()
+    assert base["prompt"] == "oi mundo" and base["chat"] is False
+    assert base["resumo"]["especiais"] == 0
+    # e o `cru` de antes não muda mais nada: o invólucro é sempre o do chat
+    sft = cliente.post("/api/lab/tokenize",
+                       json={"texto": "oi mundo", "modelo": "sft", "cru": True}).get_json()
+    assert sft["prompt"] == f"{USER_TOKEN}oi mundo{ASSISTANT_TOKEN}" and sft["chat"] is True
+    assert servidor.tabela_de("sft") is not servidor.tabela_de("base")
 
 
 def test_lab_rejeita_entradas_ruins(ambiente):

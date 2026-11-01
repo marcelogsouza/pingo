@@ -252,6 +252,17 @@ def _modelo_pedido(srv: "Server", dados: dict) -> tuple[str | None, str | None, 
     return model_id, None, 200
 
 
+def montar_prompt_lab(texto: str, instrucao: bool = True) -> str:
+    """O invólucro de chat **sem** o rótulo `Pergunta:` — `<|user|>texto<|assistant|>`.
+
+    Não é o prompt do treino (esse é `montar_prompt`, e o chat continua usando ele): o lab
+    quer mostrar os dois tokens de chat cercando o texto do aluno, e `Pergunta:` é um detalhe
+    do dataset, não da arquitetura. No **base** não há invólucro — `<|user|>` nem existe no
+    vocab dele (16.384), e tokenizá-lo produziria `<`, `|`, `user`…, o que confundiria.
+    """
+    return f"{USER_TOKEN}{texto}{ASSISTANT_TOKEN}" if instrucao else texto
+
+
 def create_app(server: Server | None = None) -> Flask:
     app = Flask(__name__)
     app.config["PINGO"] = server or Server(
@@ -326,9 +337,7 @@ def create_app(server: Server | None = None) -> Flask:
         if len(texto) > MAX_LAB_CHARS:
             return jsonify({"erro": f"texto acima de {MAX_LAB_CHARS} caracteres"}), 400
         instrucao = srv.specs[model_id].instrucao
-        cru = bool(dados.get("cru")) or not instrucao
-        prompt = texto if cru else montar_prompt(
-            texto, (dados.get("contexto") or "").strip(), instrucao)
+        prompt = montar_prompt_lab(texto, instrucao)
         try:
             saida = tokenizar(srv.tokenizador_de(model_id), prompt)
         except Exception as exc:  # noqa: BLE001 — a UI mostra o motivo, não um 500 mudo
@@ -336,7 +345,7 @@ def create_app(server: Server | None = None) -> Flask:
         saida["prompt"] = prompt
         saida["modelo"] = model_id
         saida["rotulo"] = srv.specs[model_id].label
-        saida["cru"] = cru
+        saida["chat"] = instrucao               # sem invólucro de chat no modelo base
         return jsonify(saida)
 
     @app.get("/api/lab/embedding")

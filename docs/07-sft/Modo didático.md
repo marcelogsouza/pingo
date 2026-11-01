@@ -21,7 +21,7 @@ http://127.0.0.1:8010/lab        (ou o IP da LAN, ver [[WebUI]])
 |---|---|
 | **chips coloridos** | cada pílula é um token; a cor é a *categoria* (especial, início de palavra, continuação, pontuação, número, byte puro, quebra de linha) |
 | **id embaixo de cada chip** | o modelo não vê letras, vê números — ver o id colado no pedaço é o que fecha a ideia |
-| `o prompt do chat` ⇄ `só o meu texto` | mostra o `<|user|>…<|assistant|>` que o SFT ensinou (e o texto cru do base, com o botão desabilitado explicando por quê) |
+| **o invólucro do chat, sem rótulo** | sempre tokenizamos `<|user|>seu texto<|assistant|>`: os dois violeta no começo/fim são o que o SFT ensinou o modelo a reconhecer. No **base** não há invólucro (o vocab dele não tem `<|user|>`) |
 | **medidor** | `N caracteres → M tokens · X chars/token · bytes · distintos` — o aluno vê o custo do texto em tempo real |
 | **ficha do token** (clique) | o texto humano, a superfície byte-level, os bytes em hex, a norma, e a faixa de calor dos 896 números |
 | **vizinhos por cosseno** | o argumento mais forte do passo 1: a semântia já está na geometria da tabela, antes da primeira camada |
@@ -52,7 +52,16 @@ professor servindo, funciona na M4, não precisa do `gen_lock` (dá para abrir o
 uma resposta é gerada no chat) e o `lm_head` ser a *mesma matriz* ([[Inicialização e
 embeddings tied]]) deixa o passo 5 do curso já anunciado no passo 1.
 
-**3. Checagem de vocab obrigatória.** O base tem 16.384 tokens e o SFT 16.387 (os 3 de chat
+**3. O lab mostra o invólucro, não o prompt do treino.** `montar_prompt_lab()` devolve
+`<|user|>texto<|assistant|>` — **sem o `Pergunta: `** que o dataset ensinou. É de propósito: o
+rótulo é detalhe do dataset, e o que a tela quer mostrar é o par de tokens especiais cercando o
+texto do aluno. Consequência honesta (e boa para a aula): sem o espaço, a primeira palavra cai
+num id diferente — `Quanto` é 6.666, `ĠQuanto` é 8.579 — porque **o espaço faz parte do token**.
+Para *gerar* continuamos usando `montar_prompt()` (com `Contexto:`/`Pergunta:`), e o teste que
+trava o formato do prompt do chat continua lá. No modelo base o invólucro não existe:
+`<|user|>` não está no vocab de 16.384 e viraria `<`, `|`, `user`… — a tela avisa disso.
+
+**4. Checagem de vocab obrigatória.** O base tem 16.384 tokens e o SFT 16.387 (os 3 de chat
 são `added_tokens`, [[Treino SFT]]). Tokenizar com um tokenizer e desenhar a ficha com a
 tabela do outro daria o vetor do token errado — silenciosamente. `Server.tabela_de()` recusa
 o par quando `embed.weight` e `tokenizer.get_vocab_size()` não batem.
@@ -60,8 +69,9 @@ o par quando `embed.weight` e `tokenizer.get_vocab_size()` não batem.
 ## O contrato (o que o front-end recebe)
 
 ```
-POST /api/lab/tokenize {texto, modelo, cru}
-  → {prompt, tokens:[{i, id, texto, superficie, bytes, offset, kind, acentuado, repetido}],
+POST /api/lab/tokenize {texto, modelo}
+  → {prompt, chat,                      // chat=False no base: sem invólucro de chat
+     tokens:[{i, id, texto, superficie, bytes, offset, kind, acentuado, repetido}],
      resumo:{chars, bytes, n_tokens, chars_por_token, por_categoria, acentuados,
              especiais, repetidos, distintos, vocab, cortado_em}}
 GET  /api/lab/embedding?modelo=sft&id=4560
