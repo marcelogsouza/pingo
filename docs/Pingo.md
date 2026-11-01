@@ -122,11 +122,11 @@ flowchart LR
 - [[Run do SFT-120M]] — os três runs, a curva do overfit e por que o v2 (1 época) é o que vale
 - [[Avaliação SFT]] — formato, F1, fidelidade, esquecimento catastrófico
 - [[WebUI]] — a tela de chat (Flask + SSE) para testar o modelo com o prompt do treino
-- [[Modo didático]] — o `/lab`: tokenização colorida, a matriz da frase, a tabela inteira, a lida de volta tied, o relógio do RoPE, os mapas de atenção, a régua do RMSNorm + o gate do SwiGLU e os logits do lm head (passos ①–⑤ do curso)
+- [[Modo didático]] — o `/lab`: tokenização colorida, a matriz da frase, a tabela inteira, a lida de volta tied, o relógio do RoPE, os mapas de atenção, a régua do RMSNorm + o gate do SwiGLU, os logits do lm head e a roleta da amostragem (passos ①–⑥ do curso)
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
-- [[Suíte de testes]] — 169 testes, e o que cada um protege
+- [[Suíte de testes]] — 184 testes, e o que cada um protege
 
 ### 09 — Referência
 - [[Glossário]] — todo jargão que aparece no vault
@@ -174,13 +174,15 @@ flowchart LR
 - ✅ **Modo didático** em `/lab` — passos ① tokenização, ② embedding (a frase como matriz, as
   normas da tabela inteira, a lida de volta tied), ③ RoPE + atenção (relógio com o Q real,
   radar por cabeça, matriz n×n com máscara causal), ④ RMSNorm + SwiGLU (a régua √d, o γ e as
-  2.304 portas do gate) e ⑤ lm head (a norm final + os 16.387 logits reais, com o posto do
-  sucessor real) de uma esteira de sete etapas; ①–② sem GPU, ③–⑤ com **um único forward
+  2.304 portas do gate), ⑤ lm head (a norm final + os 16.387 logits reais, com o posto do
+  sucessor real) e ⑥ amostragem (a **roleta**: fatias de 360° × probabilidade, giro com
+  semente ou token escolhido na mão, e o desdobramento com `generate_stream` até o `<|end|>`)
+  — de uma esteira de sete etapas; ①–② sem GPU, ③–⑥ com **um único forward
   real** sob o lock — [[Modo didático]].
 - ⬜ Próximo: SFT-5 (instruções gerais/mistura de texto cru, para baixar o esquecimento e
-  ensinar recusa), passos ⑥–⑦ do modo didático (⑥ amostragem: softmax, temperatura, top-k/p e
-  o `repetition_penalty` sobre os logits reais do ⑤; ⑦ loop: o token escolhido volta, KV
-  cache em ação) e Passo 8 (**350M — suspenso**).
+  ensinar recusa), o passo ⑦ do modo didático (loop: o token escolhido volta, KV cache em
+  ação — o ⑥ já gira token a token e o desdobramento já roda `generate_stream`; falta mostrar
+  o cache) e Passo 8 (**350M — suspenso**).
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer

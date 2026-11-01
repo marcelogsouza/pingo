@@ -85,8 +85,11 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | — | `5befef1` | `scripts/webui.sh`: levanta a WebUI em foreground com **Ctrl+C desligando tudo** (e derruba a instância anterior na 8010); conferido de ponta a ponta antes do teste na GPU livre |
 | — | `25d9d7b` | **Modo didático passo ⑤ (lm head)**: a última carona — o **último** dict do `capture` ganhou `nfinp/nfin` (a norm final antes/depois do γ, pelas mãos do próprio `RMSNorm`) e o `Server` passou a guardar os **logits do próprio forward** (`out.logits` `[64×16.387]` ≈ 4 MB): nada é recomputado. Rota `/api/lab/lmhead` + quatro cards: a **última régua** (‖x₂‖ 28,8–57,7 → **29,93 para todos** — sem o piso do ε, nenhum vetor é pequeno depois de 12 camadas → 46–48 com γ), o **γ final desenhado** (média **1,61**, σ 0,06 — o botão de volume do produto escalar), a **régua dos 16.387 logits** com top-10 e o **posto do sucessor real** (`investir → até`: **5º de 16.387**, o favorito era `ĠR` — o fantasma do R$) e **a mesma tabela lida duas vezes** (prévia ② × logit ⑤). O **tie provado bit a bit**: recomputar `nfin @ tabelaᵀ` com o `safetensors` na CPU bate com os logits do forward (**maxdiff 0,0**) — virou teste ([[Modo didático]]) |
 | — | — | Suíte: **169 casos** em 12 arquivos (+1 `test_model` do tied/norm final, +2 `test_didatic` da ficha do lm head, +3 `test_webui` da rota — a captura do ③ agora serve ③, ④ **e** ⑤; 16 ms por posição nova na CPU) |
+| — | `7860377` | **Bug fix: o top-p do `sample_next` acumula probabilidades, não logits** — o cumsum em logits cortava tudo menos o favorito quando havia logit positivo (com `top_p<1`); o padrão `top_p=1` do chat nunca foi afetado, então runs e relatório não mudam. Pego pela roleta do ⑥; travado por teste do nucleus ([[Gotchas]]) |
+| — | `7ef3a04` | **Modo didático passo ⑥ (amostragem — a roleta dos logits)**: `menu_amostra` no `didatic` refaz **a mesma conta do `sample_next` do chat** (penalidade de repetição → temperatura → top-k → top-p → `multinomial`) e devolve o menu com **graus** (360° × p), rank, logit e `p_bruto`; a roda **fecha em 360°** (teste). Rotas `/api/lab/amostra` (menu/girar/forcar, semente reproduz o giro; `forcar` obedece até token fora do filtro, fatia 0°) e `/api/lab/desdobrar` (`generate_stream` até o `<\|end\|>` — prévia do ⑦). **Stateless**: o cliente manda a história; carona na captura do ③–⑤ com chave `modelo+ids`, teto subiu para 160 tokens (`MAX_AMOSTRA_TOKENS`); giro/slider na mesma frase é cache-hit (2–35 ms na CPU). Na tela: sliders de T/top-k/top-p/rep + semente, canvas da roleta com ponteiro, cardápio clicável, chips 🎲/✋ com desfazer e o card do desdobramento — `A` = 285,4°/360° a T=1, desdobramento guloso de 29 tokens em 0,64 s na CPU ([[Modo didático]]) |
+| — | — | Suíte: **184 casos** em 12 arquivos (+6 `test_didatic` do menu/roleta, +8 `test_webui` das rotas ⑥/desdobrar, +1 `test_model` do nucleus) |
 
-Cinco dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
+Seis dos sete passos de uma esteira (tokenização → embedding → RoPE/atenção → MLP → lm
 head → amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar
 o modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
 
@@ -112,7 +115,7 @@ flowchart LR
         sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
     subgraph "2026-11-01"
-        lab["modo didático<br/>(/lab · passos ①–⑤)"]
+        lab["modo didático<br/>(/lab · passos ①–⑥)"]
     end
     p6a --> p6b --> p7
     wui --> lab

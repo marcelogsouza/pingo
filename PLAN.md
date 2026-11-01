@@ -134,9 +134,23 @@ pingo/
       posto e nota do sucessor real: `até` em 5º de 16.387) e **a mesma tabela lida duas
       vezes** (prévia ② × logit real ⑤). Tie provado: `logits == nfin @ tabelaᵀ` bit a bit
       (maxdiff 0,0) — teste na suíte. 16 ms por posição (captura em cache, a mesma do ③/④).
-    - **⑥ amostragem** — softmax, temperatura, top-k/top-p: por que 120M precisa de `repetition_penalty`.
-    - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação.
-    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③, ④ e ⑤ entregues cumprem o critério (`capture` + `gen_lock` + teto de 64, **um único forward** para os três; com o professor servindo, `--device cpu`).
+    - **⑥ amostragem** — ✔ 2026-11-01: a **roleta** — `menu_amostra` no `didatic` aplica a
+      mesma conta do `sample_next` do chat (temperatura → top-k → top-p → `multinomial`, com a
+      penalidade de repetição sobre a história toda) e devolve o menu com **graus** (360° × p),
+      rank, logit e `p_bruto`; o cardápio (24 fatias + a cinza "outros", soma = 360°, teste) é
+      clicável: **forçar** obedece até um token cortado pelo filtro (fatia 0°). Girar é
+      reproduzível com semente; o card **desdobramento** continua a história com
+      `generate_stream` (KV cache, prévia do ⑦) até `<|end|>` ou o teto. Rotas
+      `/api/lab/amostra|desdobrar` — stateless, carona na captura do ③–⑤ (teto subiu para 160
+      tokens, `MAX_AMOSTRA_TOKENS`; girar/sliders são cache-hit, 2–35 ms na CPU). **Bug pego e
+      consertado aqui**: o top-p do `sample_next` acumulava **logits**, não probabilidades —
+      com logit positivo cortava tudo menos o favorito (padrão `top_p=1` não era afetado; runs
+      e relatório não mudam; teste do nucleus na suíte).
+    - **⑦ loop** — o token escolhido volta como entrada; KV cache em ação. O ⑥ já entrega a
+      matéria-prima: a história cresce token a token na tela e o desdobramento já usa
+      `generate_stream`/`PingoCache` — o passo ⑦ mostra **o cache**: o que é reusado e o que é
+      recomputado a cada token.
+    - Critério geral: nada de GPU até a etapa ② (foi o caso de ① e ②); a partir da ③, forward com captura de intermediários e aviso ao usuário antes de subir qualquer coisa na VRAM. ✔ Os ③, ④, ⑤ e ⑥ entregues cumprem o critério (`capture` + `gen_lock` + tetos de 64/160, **um único forward** para ③–⑤ e o primeiro menu do ⑥; com o professor servindo, `--device cpu`).
 
 ## Decisões fechadas ✔
 

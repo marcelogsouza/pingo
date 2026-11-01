@@ -171,14 +171,21 @@ passos ①, ②, ③, ④ e ⑤ estão prontos — **tokenização**, **embeddin
   fato (`investir → até` ficou em **5º de 16.387**). A mesma tabela do passo ①, lida de volta
   com o vetor *final* — o tie (`lm_head` = embeddings) comprovado bit a bit contra o checkpoint.
 
+- no passo ⑥, os logits viram **a roleta**: cada token do cardápio (top-24 + "outros") é uma
+  fatia de **360° × a sua probabilidade**, com temperatura, top-k, top-p e penalidade de
+  repetição à vista. Girar é reproduzível com semente — e dá para **escolher o token na mão**,
+  clicando no cardápio (até um token cortado pelo filtro entra, fatia 0°). O card
+  **desdobramento** mostra o que veio daquilo: a história continua com o `generate_stream` do
+  chat, token a token, até o `<|end|>`. O passo ⑦ (o loop e o KV cache em cena) é o único que
+  falta. Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
+
 Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
-Os passos ③–⑤ carregam o modelo no device do servidor — **um único forward serve os três**
-(trocar camada custa ~12 ms e mudar de posição no ⑤, ~16 ms, pela captura em cache); respeitam
-o lock do chat (devolvem aviso se ele está falando) e limitam a frase a 64 tokens; com a VRAM
-ocupada, `--device cpu` serve igual (0,66 s o forward de uma frase curta; na GPU livre são
-0,64 s já com o load do modelo). Os passos ⑥–⑦ (amostragem, loop) aparecem como "em breve" —
-os logits reais que o ⑥ pesa já saem da captura do ⑤. Detalhes em
-[`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
+Os passos ③–⑥ carregam o modelo no device do servidor — **um único forward serve ③, ④, ⑤ e o
+primeiro menu do ⑥** (trocar camada custa ~12 ms e mudar de posição no ⑤, ~16 ms, pela captura
+em cache; girar a roleta ou mexer nos sliders na mesma frase é cache-hit, 2–35 ms); respeitam
+o lock do chat (devolvem aviso se ele está falando) e limitam a frase (64 tokens nos ③–⑤, 160
+no ⑥); com a VRAM ocupada, `--device cpu` serve igual (0,66 s o forward de uma frase curta; na
+GPU livre são 0,64 s já com o load do modelo).
 
 ## Aviso
 
