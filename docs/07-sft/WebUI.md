@@ -11,6 +11,8 @@ Uma página de chat em `localhost` para conversar com o Pingo sem escrever códi
 hiperparâmetros de amostragem à mão.
 
 ```bash
+./scripts/webui.sh                                 # atalho: derruba a instância anterior da WebUI
+                                                   # e sobe em foreground — Ctrl+C desliga limpo
 uv run python scripts/webui.py                     # 0.0.0.0:8010 (LAN + localhost)
 uv run python scripts/webui.py --host 127.0.0.1    # só esta máquina
 uv run python scripts/webui.py --device cpu --port 8080

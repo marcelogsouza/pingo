@@ -91,10 +91,11 @@ cat runs/sft-120m-ep1/final/eval_sft.json
 uv run python scripts/sample.py --model runs/sft-120m/final --no-bench
 
 # WebUI (chat no navegador; a 8000 desta máquina está ocupada → 8010)
+./scripts/webui.sh                                  # atalho: derruba a instância anterior, Ctrl+C desliga
 uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
 uv run python scripts/webui.py --host 127.0.0.1     # só esta máquina
 uv run python scripts/webui.py --device cpu --port 8080
-#   /      → chat            /lab → modo didático (①–③; só o ③ carrega o modelo)
+#   /      → chat            /lab → modo didático (①–④; só ③–④ carregam o modelo — um forward só)
 ```
 
 ## Comparação de professores (opcional, custa centavos)

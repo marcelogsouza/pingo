@@ -49,7 +49,8 @@ captura serve os dois). Suíte: **163 testes verdes**.
 1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
 2. `uv run pytest -q` → **163 verdes** (CPU, ~14 s).
-3. `uv run python scripts/webui.py` e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
+3. `./scripts/webui.sh` (ou `uv run python scripts/webui.py`; o script derruba a instância
+   anterior e desliga com Ctrl+C) e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
    imprime): se o chat responder, o modelo e a GPU estão de pé; `/lab` responde mesmo com a
    GPU ocupada. (A porta 8000 desta máquina é de outra aplicação; o host padrão é `0.0.0.0`,
    **sem autenticação**.)
