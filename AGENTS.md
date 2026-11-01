@@ -65,13 +65,10 @@ KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas 
   memória no `train_sft.py`, que salva uma cópia em `runs/sft-*/tokenizer.json`. Regerar o
   tokenizer invalidaria todos os `data/tokens/*.bin`.
 - **Nada de CUDA pesado com o professor servindo** (ele precisa da VRAM). Com o professor de
-  pé, o webui roda em `--device cpu`. O que encosta no modelo no `/lab` (③–⑦) obedece ao
-  `gen_lock` e a tetos de tokens — nunca chamar `carregar()` fora das rotas do lab e nunca
-  derrubar o professor por conta própria. Regras de captura, cache e tetos:
-  `docs/09-referencia/Gotchas.md` e `docs/07-sft/Modo didático.md`.
+  pé, o webui roda em `--device cpu` — e nunca derrube o professor por conta própria.
 - **A conta de amostragem é uma só e o loop é um só**: `sample_next` do chat (o top-p acumula
-  **probabilidades**, não logits) e `generate_stream` (o ⑦ do lab É ele, teste trava). Não
-  recriar um segundo filtro nem um segundo loop; armadilhas em `docs/09-referencia/Gotchas.md`.
+  **probabilidades**, não logits) e `generate_stream` — todo loop do projeto é ele, teste
+  trava. Não recriar um segundo filtro nem um segundo loop.
 - **Um escritor por saída.** Dois `gen_sft.py` no mesmo JSONL corrompem o arquivo; dois
   `train_sft.py` no mesmo `--out` idem. A WebUI também ocupa GPU: rode uma geração por vez.
 
