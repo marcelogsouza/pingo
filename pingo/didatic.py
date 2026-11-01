@@ -36,6 +36,7 @@ BUSCA_PADRAO = 20          # limites do lookup no vocab
 FAIXA_BINS = 128           # colunas da linha da matriz (896 = 7 × 128; funciona p/ qualquer dim)
 MATRIZ_LINHAS = 96         # teto de linhas da matriz — tela nenhuma lê 500 linhas de uma vez
 LIDA_PADRAO = 8            # k da "tabela lida de volta" (passo ②)
+MAX_ATTN_TOKENS = 64       # teto de tokens na captura de atenção (pesos 14×n² por camada)
 
 # Nomes que são especiais por construção no projeto (além dos `added_tokens` do backend).
 # No fixture de teste os tokens de chat entram como vocab comum — daí a lista explícita.

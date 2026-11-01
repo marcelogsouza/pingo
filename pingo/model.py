@@ -94,15 +94,23 @@ class Attention(nn.Module):
         return proj.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)  # [B,H,T,D]
 
     def forward(self, x, cos, sin, cache: PingoCache | None = None,
-                attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+                attn_mask: torch.Tensor | None = None,
+                capture: dict | None = None) -> torch.Tensor:
         """`attn_mask` bool [B,1,T,T] (True = pode atender) p/ batches com padding.
 
         Exige `is_causal=False` no SDPA: a causalidade já vem embutida na máscara montada
         pelo `PingoLM` (passar as duas coisas ao SDPA deixa o comportamento ambíguo).
+
+        `capture` (modo didático): dict vazio que sai preenchido com q_lin/q, k_lin/k
+        ([B,H,T,D], pré/pós-RoPE) e `w` — as probabilidades de atenção [B,H,T,T] refeitas
+        à mão (o SDPA não devolve pesos). Só no prefill sem padding; o caminho normal não
+        muda uma linha: o SDPA continua sendo o produtor do `y`.
         """
         b, t, _ = x.shape
-        q = apply_rope(self._split(self.q_proj(x)), cos, sin)
-        k = apply_rope(self._split(self.k_proj(x)), cos, sin)
+        q_lin = self._split(self.q_proj(x))
+        k_lin = self._split(self.k_proj(x))
+        q = apply_rope(q_lin, cos, sin)
+        k = apply_rope(k_lin, cos, sin)
         v = self._split(self.v_proj(x))
 
         if cache is not None:
@@ -124,6 +132,17 @@ class Attention(nn.Module):
             y = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
         else:
             y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        if capture is not None:
+            if cache is not None:
+                raise ValueError("captura de atenção só no prefill (sem PingoCache)")
+            logits = (q @ k.transpose(-1, -2)) / math.sqrt(self.head_dim)
+            causal = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
+            permitido = causal if attn_mask is None else (causal & attn_mask[:, 0])
+            neg = ~causal.unsqueeze(0).unsqueeze(0) if attn_mask is None else ~permitido.unsqueeze(1)
+            logits = logits.masked_fill(neg, torch.finfo(q.dtype).min)
+            w = torch.softmax(logits, dim=-1)
+            capture.update(q_lin=q_lin.detach(), q=q.detach(), k_lin=k_lin.detach(),
+                           k=k.detach(), w=w.detach())
         y = y.transpose(1, 2).reshape(b, t, -1)
         return self.o_proj(y)
 
@@ -153,8 +172,9 @@ class PingoBlock(nn.Module):
         self.mlp = SwiGLU(config)
 
     def forward(self, x, cos, sin, cache: PingoCache | None = None,
-                attn_mask: torch.Tensor | None = None) -> torch.Tensor:
-        x = x + self.attn(self.norm_attn(x), cos, sin, cache, attn_mask)
+                attn_mask: torch.Tensor | None = None,
+                capture: dict | None = None) -> torch.Tensor:
+        x = x + self.attn(self.norm_attn(x), cos, sin, cache, attn_mask, capture)
         return x + self.mlp(self.norm_mlp(x))
 
 
@@ -196,14 +216,24 @@ class PingoLM(PreTrainedModel):
         labels: torch.Tensor | None = None,
         cache: PingoCache | None = None,
         attention_mask: torch.Tensor | None = None,
+        capture: list[dict] | None = None,
     ) -> CausalLMOutputWithPast:
         """`attention_mask` [B,T] com 1 = token real, 0 = padding (convenção HF).
 
         Padding é **à direita** (pad no fim): assim as posições dos tokens reais continuam
         0..n-1 e o RoPE não precisa de deslocamento. `labels` usa `-100` nas posições que não
         devem contribuir para a loss (prompt e padding) — default do `cross_entropy`.
+
+        `capture` (modo didático, passo ③): lista de um dict vazio por bloco; cada um sai
+        com `q_lin/q/k_lin/k` e `w` (as probabilidades de atenção do prefill). Exige B=1,
+        sem padding e sem cache — o forward normal (treino/geração) não toca nisso.
         """
         b, t = input_ids.shape
+        if capture is not None:
+            if b != 1 or attention_mask is not None or cache is not None:
+                raise ValueError("capture: só prefill de sequência única, sem padding/cache")
+            if len(capture) != self.config.num_hidden_layers:
+                raise ValueError(f"capture precisa de {self.config.num_hidden_layers} dicts")
         if position_ids is None:
             if cache is not None:
                 position_ids = torch.arange(
@@ -225,8 +255,8 @@ class PingoLM(PreTrainedModel):
 
         x = self.embed(input_ids)
         cos, sin = self.rope.tables(position_ids)
-        for blk in self.blocks:
-            x = blk(x, cos, sin, cache, attn_mask)
+        for i, blk in enumerate(self.blocks):
+            x = blk(x, cos, sin, cache, attn_mask, None if capture is None else capture[i])
         if cache is not None:
             cache.commit()
         x = self.norm(x)

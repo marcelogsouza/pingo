@@ -353,6 +353,56 @@ def test_lab_lida_de_volta_traz_nota_e_cosseno(ambiente):
     assert cliente.get("/api/lab/lida?modelo=sft").status_code == 400
 
 
+# ---------------------------------------------------------------- passo ③ · RoPE+atenção
+
+
+def test_lab_attn_pesos_reais_casuais_e_modelo_carregado(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4, 9, 10, 5], "camada": 0})
+    assert r.status_code == 200
+    a = r.get_json()
+    assert a["n_camadas"] == 1 and a["heads"] == 2 and a["n"] == 4
+    pesos = a["pesos"]
+    assert all(abs(sum(linha) - 1) < 1e-3 for h in pesos for linha in h)
+    assert all(pesos[h][i][j] == 0.0 for h in range(2) for i in range(4) for j in range(i + 1, 4))
+    assert servidor._loaded is not None            # ③ é a exceção deliberada: carrega o modelo
+
+
+def test_lab_rope_vetores_reais_e_rotacao_fiel(ambiente):
+    cliente, servidor = ambiente
+    r = cliente.get("/api/lab/rope?modelo=sft&ids=4,9,10,5&camada=0&head=1&i=2")
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["pos"] == 2 and len(d["inv_freq"]) == 4          # head_dim 8 → 4 ponteiros
+    assert len(d["q_lin"]) == 8 and len(d["q"]) == 8
+    assert d["inv_freq"] == sorted(d["inv_freq"], reverse=True)  # par 0 é o ponteiro veloz
+    ql, q = torch.tensor(d["q_lin"]), torch.tensor(d["q"])
+    assert torch.allclose(ql.norm(), q.norm(), atol=1e-4)     # rotação preserva a norma
+    # a captura fica em cache (chave modelo+ids): trocar só a camada não refaz o forward
+    antes = servidor._captura
+    assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                               "camada": 0}).status_code == 200
+    assert servidor._captura is antes
+
+
+def test_lab_attn_valida_entradas_e_responde_429(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": ["x"]}).status_code == 400
+    r = cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4, 9], "camada": 7})
+    assert r.status_code == 400 and "camada" in r.get_json()["erro"]
+    assert cliente.get("/api/lab/rope?modelo=sft&ids=4,9&camada=0&head=9&i=0").status_code == 400
+    servidor.gen_lock.acquire(blocking=False)      # o chat generating → 429, sem fila
+    try:
+        assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4]}).status_code == 429
+        assert cliente.get("/api/lab/rope?modelo=sft&ids=4").status_code == 429
+    finally:
+        servidor.gen_lock.release()
+    d = cliente.post("/api/lab/attn",
+                     json={"modelo": "sft", "ids": [4] * 700}).get_json()
+    assert d["n"] == 64                            # teto de 64 tokens na captura
+
+
 def test_lab_lookup_por_id_e_por_palavra(ambiente):
     cliente, _ = ambiente
     por_id = cliente.get("/api/lab/lookup?modelo=sft&q=9").get_json()["achados"]
@@ -380,6 +430,7 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     assert cliente.get("/lab").status_code == 200
     assert "tokenização" in corpo and "/api/lab/tokenize" in corpo and "em breve" in corpo
     assert "/api/lab/matriz" in corpo and "/api/lab/stats" in corpo and "/api/lab/lida" in corpo
+    assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 

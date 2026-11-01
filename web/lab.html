@@ -157,6 +157,16 @@
   .mchip{font:12.5px var(--mono);color:var(--text);background:var(--bg2);border:1px solid var(--line);
     border-left:3px solid var(--c,#5b93ff);border-radius:7px;padding:4px 9px;cursor:pointer}
   .mchip.on{background:var(--accent-dim);border-color:#2b4d8f;box-shadow:inset 0 0 0 1px #2b4d8f}
+  /* passo ③: RoPE + atenção */
+  .cams{display:inline-flex;gap:4px;flex-wrap:wrap}
+  .cams button{font:11.5px var(--mono);color:var(--muted);background:var(--bg2);
+    border:1px solid var(--line);border-radius:7px;padding:4px 8px;cursor:pointer}
+  .cams button.on{background:var(--accent-dim);color:#cfe0ff;box-shadow:inset 0 0 0 1px #2b4d8f}
+  canvas#relogio{width:100%;max-width:470px;aspect-ratio:1/1;background:#0e1117;border-radius:12px}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:8px 0 2px}
+  canvas#radar{width:100%;background:#0e1117;border-radius:8px;margin-top:10px}
+  .matwrap{display:flex;justify-content:center;margin-top:10px}
+  canvas#matz{max-width:560px;width:100%;aspect-ratio:1/1;background:#0e1117;border-radius:8px}
   .tit{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);
     margin:14px 0 8px}
   /* busca */
@@ -285,9 +295,78 @@
   </section>
   </div>
 
+  <div id="p3" hidden>
+  <section class="card">
+    <h2>3 · RoPE + atenção — aqui o modelo inteiro trabalha</h2>
+    <p class="hint">Diferente dos passos ① e ②, esta aba faz um <b>forward real</b> do Pingo
+      (por isso obedece ao lock do chat — se o chat está respondendo, ela devolve um aviso).
+      A lição vem em duas camadas: o <b>RoPE</b> dá ângulo ao vetor — o relógio abaixo gira os
+      32 ponteiros de um Q <i>capturado do modelo</i>, cada par <code>(xⱼ, xⱼ₊₃₂)</code> numa
+      velocidade diferente — e a <b>atenção</b> é o produto escalar do Q de um token com os K
+      de todos os anteriores: quem olhou para quem, em cada cabeça. Escolha camada, cabeça e
+      o token observado.</p>
+    <div class="row">
+      <span class="tit">camada</span><span class="cams" id="camadas"></span>
+      <span class="tit">cabeça</span><span class="cams" id="heads"></span>
+    </div>
+    <div class="mchips" id="attok"></div>
+    <div class="hint2" id="atnote"></div>
+  </section>
+
+  <section class="card">
+    <h2>O relógio do RoPE — 32 ponteiros, 32 velocidades</h2>
+    <p class="hint">Cada ponteiro é um <b>par de coordenadas</b> do Q capturado: cinza = como
+      o vetor chega (posição 0), cor = girado à posição do slider. O ponteiro 1 gira uma volta
+      inteira a cada ~6 posições; o último mal sai do lugar. É exatamente a matemática que o
+      modelo executa — o teste do projeto confere.</p>
+    <div class="duo">
+      <div><canvas id="relogio"></canvas>
+        <div class="escala"><span>ponteiro 1 = mais veloz</span>
+          <span id="rolectura">passe o mouse</span><span>32 = mais lento</span></div></div>
+      <div>
+        <div class="tit">o par escolhido, com números de verdade</div>
+        <div class="grade" id="parelho"></div>
+        <div class="tit">gire o token pela frase</div>
+        <input type="range" id="posslider" min="0" max="63" step="1" value="0">
+        <div class="escala"><span>posição 0</span><span id="poslectura"></span>
+          <span>posição 63</span></div>
+        <div class="row"><button class="chip" id="posplay">▶ girar devagar</button></div>
+        <div class="hint2" id="ropenota">Ponto verde = o Q que o modelo realmente produziu na
+          posição do token: quando o slider bate na posição certa, ele coincide com o ponteiro
+          — a aula não é figura, é conferência.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Para quem este token olha — uma linha por cabeça</h2>
+    <p class="hint">Linha = cabeça; coluna = token da frase; intensidade = quanto o token
+      escolhido prestou atenção nele (escala: o máximo de cada linha). Colunas à direita do
+      token ficam escuras: <b>máscara causal</b>, ninguém enxerga o futuro. Clique numa linha
+      para abrir a cabeça em detalhe.</p>
+    <canvas id="radar"></canvas>
+    <div class="escala"><span id="radarleft"></span><span id="radarlegenda">passe o mouse</span>
+      <span>▸ futuro mascarado</span></div>
+    <div id="sparkwrap" hidden>
+      <div class="tit" id="sparktit"></div>
+      <div class="vizinhos" id="spark"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>A matriz completa — todos olhando todos, nesta camada e cabeça</h2>
+    <p class="hint">Linha = token que olha (Q); coluna = token olhado (K). O triângulo superior
+      está vazio de propósito. A linha do token escolhido está contornada — ela é o radar
+      acima, deitada.</p>
+    <div class="matwrap"><canvas id="matz"></canvas></div>
+    <div class="escala"><span id="matleft"></span><span id="matlectura"></span>
+      <span id="matright"></span></div>
+  </section>
+  </div>
+
   <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
-    de <span id="vocab">16.000</span> pedaços · tabela lida direto do <code>.safetensors</code> —
-    nada disto usa a GPU</p>
+    de <span id="vocab">16.000</span> pedaços · passos ① e ② leem o <code>.safetensors</code>
+    sem GPU; o passo ③ roda um forward real no device do servidor</p>
 </div>
 
 <div id="ficha">
@@ -319,7 +398,7 @@ const CAT = {
   'continuação': '#f2a65a',
 };
 const PASSOS = [
-  ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', false],
+  ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', true],
   ['RMSNorm + SwiGLU', false], ['lm head — a mesma tabela!', false],
   ['amostragem', false], ['loop: o token volta', false],
 ];
@@ -328,7 +407,7 @@ const EXEMPLOS = [
   "Olá, São João — não é o são João.",
   "O preço foi R$ 1.234,56 (≈ 3% do PIB).",
 ];
-const state = {modelos: [], modelo: null, filtro: null, chat: true, passo: 1,
+const state = {modelos: [], modelo: null, filtro: null, chat: true, passo: 1, device: null,
                tokens: [], resumo: null, prompt: '', sel: null, lidaTok: null};
 
 const fmt = n => n.toLocaleString('pt-BR');
@@ -355,14 +434,16 @@ function irPara(n){
   state.passo = n;
   $('#p1').hidden = n !== 1;
   $('#p2').hidden = n !== 2;
+  $('#p3').hidden = n !== 3;
   [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
   if (n === 2) desenharPasso2();
+  if (n === 3) garantirAtencao();
 }
 
 /* ---------------------------------------------------------------- modelos */
 async function carregarModelos(){
   const r = await fetch('/api/status'); const s = await r.json();
-  state.modelos = s.modelos;
+  state.modelos = s.modelos; state.device = s.device;
   const box = $('#models'); box.innerHTML = '';
   if (!s.modelos.length){
     box.innerHTML = '<button disabled>sem checkpoint</button>';
@@ -415,7 +496,10 @@ function desenharTudo(dados){
   desenharAvisos(dados, s);
   aplicarFiltro();
   state.lidaTok = null;
+  if (p3.tok !== null) p3.tok = null;
+  p3.pesos.clear(); p3.rope.clear(); p3.pronto = false;   // o forward velho não vale mais
   if (state.passo === 2) desenharPasso2();
+  if (state.passo === 3) garantirAtencao();
 }
 
 function desenharMedidor(dados, s){
@@ -695,6 +779,317 @@ function barrasLida(box, lista, campo){
     linha.style.cursor = 'pointer';
     box.appendChild(linha);
   }
+}
+
+/* ------------------------------------------------- passo ③ · RoPE + atenção (GPU!) */
+const p3 = {tok: null, camada: 0, head: 0, par: 0, pos: 0, girando: 0,
+            pesos: new Map(), rope: new Map(), ropeAtual: null,
+            n: 0, heads: 0, camadas: 0, pronto: false};
+
+function tokAtencao(){
+  if (p3.tok && state.tokens.includes(p3.tok)) return p3.tok;
+  p3.tok = state.tokens.find(t => t.kind !== 'especial') || state.tokens[0] || null;
+  return p3.tok;
+}
+
+async function garantirAtencao(){
+  if (!state.tokens.length) return;
+  if (p3.pronto){ desenharPasso3(); return; }
+  p3.head = 0;
+  await carregarCamada(p3.camada);
+  if (!p3.pesos.has(p3.camada)) return;
+  p3.pronto = true;
+  p3.pos = (tokAtencao() || {i: 0}).i;
+  $('#posslider').value = p3.pos;
+  await carregarRope();
+  desenharPasso3();
+}
+
+async function carregarCamada(c){
+  if (p3.pesos.has(c)) return;
+  let r;
+  try {
+    r = await fetch('/api/lab/attn', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({modelo: state.modelo, ids: state.tokens.map(t => t.id), camada: c})});
+  } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+  const d = await r.json();
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  p3.pesos.set(c, d.pesos); p3.n = d.n; p3.heads = d.heads; p3.camadas = d.n_camadas;
+}
+
+async function carregarRope(){
+  const t = tokAtencao(); if (!t || t.i >= p3.n) return;
+  const chave = `${p3.camada}:${p3.head}:${t.i}`;
+  if (p3.rope.has(chave)){ p3.ropeAtual = p3.rope.get(chave); return; }
+  const ids = state.tokens.slice(0, p3.n).map(x => x.id).join(',');
+  let r;
+  try {
+    r = await fetch(`/api/lab/rope?modelo=${encodeURIComponent(state.modelo)}&ids=${ids}`
+      + `&camada=${p3.camada}&head=${p3.head}&i=${t.i}`);
+  } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+  const d = await r.json();
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  p3.rope.set(chave, d); p3.ropeAtual = d;
+}
+
+function montarControles3(){
+  const cc = $('#camadas'); cc.innerHTML = '';
+  for (let i = 0; i < p3.camadas; i++){
+    const b = document.createElement('button');
+    b.textContent = i + 1;
+    b.title = i === 0 ? 'a primeira camada (mais "sintática")' : `camada ${i + 1} de ${p3.camadas}`;
+    b.classList.toggle('on', i === p3.camada);
+    b.onclick = async () => {
+      p3.camada = i; montarControles3();
+      await carregarCamada(i); await carregarRope(); desenharPasso3();
+    };
+    cc.appendChild(b);
+  }
+  const hc = $('#heads'); hc.innerHTML = '';
+  for (let h = 0; h < p3.heads; h++){
+    const b = document.createElement('button');
+    b.textContent = h + 1;
+    b.classList.toggle('on', h === p3.head);
+    b.onclick = async () => {
+      p3.head = h; montarControles3();
+      await carregarRope(); desenharPasso3();
+    };
+    hc.appendChild(b);
+  }
+  const box = $('#attok'); box.innerHTML = '';
+  state.tokens.slice(0, p3.n).forEach((tk) => {
+    const b = document.createElement('button');
+    b.className = 'mchip' + (tk === p3.tok ? ' on' : '');
+    b.style.setProperty('--c', CAT[tk.kind] || '#5b93ff');
+    b.textContent = visivel(tk.texto || tk.superficie);
+    b.onclick = async () => {
+      p3.tok = tk; p3.pos = tk.i; $('#posslider').value = tk.i;
+      montarControles3(); await carregarRope(); desenharPasso3();
+    };
+    box.appendChild(b);
+  });
+  const cortado = p3.n < state.tokens.length ? ` (frase cortada em ${p3.n} tokens)` : '';
+  $('#atnote').textContent = `forward real: ${p3.n} tokens × ${p3.camadas} camadas × `
+    + `${p3.heads} cabeças · device do servidor: ${state.device || '?'}${cortado}`;
+}
+
+function desenharPasso3(){ montarControles3(); desenharRelogio(); desenharRadar(); desenharMatriz(); }
+
+/* ---- o relógio ---- */
+function maoZ(ctx, cx, cy, a, b, ang, escala, cor, w, dpr){
+  const x = a * Math.cos(ang) - b * Math.sin(ang);
+  const y = a * Math.sin(ang) + b * Math.cos(ang);
+  ctx.strokeStyle = cor; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + x * escala, cy - y * escala); ctx.stroke();
+  return [cx + x * escala, cy - y * escala];
+}
+
+function desenharRelogio(){
+  const d = p3.ropeAtual; const cv = $('#relogio');
+  if (!d) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const lado = cv.clientWidth || 470;
+  cv.width = cv.height = Math.round(lado * dpr);
+  const ctx = cv.getContext('2d'), c = cv.width / 2, R = c * 0.82, half = d.head_dim / 2;
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = 'rgba(231,235,242,.14)'; ctx.lineWidth = dpr;
+  ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.stroke();
+  let mx = 1e-9;
+  for (let j = 0; j < half; j++) mx = Math.max(mx, Math.hypot(d.q_lin[j], d.q_lin[j + half]));
+  const escala = R / mx;
+  const cor = j => `hsl(${Math.round(255 - 235 * j / (half - 1))} 85% 62%)`;
+  for (let j = 0; j < half; j++){
+    const a = d.q_lin[j], b = d.q_lin[j + half];
+    maoZ(ctx, c, c, a, b, 0, escala, 'rgba(231,235,242,.16)', 1.4 * dpr, dpr);
+    const ponta = maoZ(ctx, c, c, a, b, p3.pos * d.inv_freq[j], escala,
+                       j === p3.par ? '#ffd166' : cor(j), 2.4 * dpr, dpr);
+    p3.pontas = p3.pontas || [];
+    p3.pontas[j] = ponta;
+  }
+  const tok = tokAtencao();
+  if (tok && p3.pos === tok.i){                     // conferência: o q capturado do modelo
+    ctx.fillStyle = '#3ddc84';
+    for (let j = 0; j < half; j++){
+      const x = c + d.q[j] * escala, y = c - d.q[j + half] * escala;
+      ctx.beginPath(); ctx.arc(x, y, 2.6 * dpr, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  detalhePar();
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) / rect.width * cv.width - c;
+    const y = c - (ev.clientY - rect.top) / rect.height * cv.height;
+    if (Math.hypot(x, y) < 6 * dpr){ p3.par = 0; }
+    else {
+      const ang = Math.atan2(y, x);
+      let melhor = 0, dif = Infinity;
+      for (let j = 0; j < half; j++){
+        const t = p3.pontas[j];
+        const dAng = Math.abs(((Math.atan2(c - t[1], t[0] - c) - ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        const dLen = Math.abs(Math.hypot(t[0] - c, t[1] - c) - Math.hypot(x, y));
+        const custo = dAng * 90 + dLen / escala * 0.4;
+        if (custo < dif){ dif = custo; melhor = j; }
+      }
+      p3.par = melhor;
+    }
+    desenharRelogio();
+  };
+}
+
+function detalhePar(){
+  const d = p3.ropeAtual; if (!d) return;
+  const j = p3.par, half = d.head_dim / 2;
+  const a = d.q_lin[j], b = d.q_lin[j + half];
+  const th = p3.pos * d.inv_freq[j];
+  const ap = a * Math.cos(th) - b * Math.sin(th), bp = a * Math.sin(th) + b * Math.cos(th);
+  const g = $('#parelho'); g.innerHTML = '';
+  g.append(
+    kv('par de coordenadas', `(${j}, ${j + half})`),
+    kv('velocidade θ', d.inv_freq[j].toExponential(2).replace('.', ',')),
+    kv('uma volta em', `${dec((2 * Math.PI / d.inv_freq[j]).toFixed(1))} posições`),
+    kv(`ângulo na posição ${p3.pos}`, `${dec(th.toFixed(3))} rad`),
+    kv('xⱼ antes → depois', `${dec(a)} → ${dec(ap.toFixed(3))}`),
+    kv(`xⱼ₊${half} antes → depois`, `${dec(b)} → ${dec(bp.toFixed(3))}`));
+  $('#rolectura').textContent = `ponteiro ${j + 1} de ${half}`;
+  $('#poslectura').textContent = `posição ${p3.pos}`;
+}
+
+$('#posslider').addEventListener('input', (ev) => {
+  p3.pos = +ev.target.value; p3.girando = 0; $('#posplay').textContent = '▶ girar devagar';
+  if (p3.ropeAtual) desenharRelogio();
+});
+$('#posplay').onclick = () => {
+  if (p3.girando) { p3.girando = 0; $('#posplay').textContent = '▶ girar devagar'; return; }
+  $('#posplay').textContent = '⏸ parar';
+  const passo = () => {
+    if (!p3.girando || state.passo !== 3) return;
+    p3.pos = (p3.pos + 1) % 64;
+    $('#posslider').value = p3.pos;
+    desenharRelogio();
+    setTimeout(passo, 140);
+  };
+  p3.girando = 1; passo();
+};
+
+/* ---- o radar (1 cabeça por linha) e o detalhe ---- */
+function desenharRadar(){
+  const tok = tokAtencao(); const pesos = p3.pesos.get(p3.camada);
+  const cv = $('#radar');
+  if (!tok || !pesos || tok.i >= p3.n) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const larg = cv.clientWidth || 880, alt = Math.max(140, p3.heads * 19 + 8);
+  cv.width = Math.round(larg * dpr); cv.height = Math.round(alt * dpr);
+  const ctx = cv.getContext('2d'), lab = 36 * dpr, n = p3.n;
+  const cw = (cv.width - lab) / n, hh = (cv.height - 8 * dpr) / p3.heads;
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, cv.width, cv.height);
+  for (let h = 0; h < p3.heads; h++){
+    const linha = pesos[h][tok.i];
+    let rmax = 1e-9; for (const v of linha) rmax = Math.max(rmax, v);
+    ctx.fillStyle = 'rgba(231,235,242,.5)'; ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+    ctx.fillText('c' + (h + 1), 4 * dpr, 4 * dpr + h * hh + hh * 0.62);
+    for (let j = 0; j < n; j++){
+      if (j > tok.i) ctx.fillStyle = '#141926';
+      else {
+        const t = linha[j] / rmax;
+        ctx.fillStyle = `rgba(91,147,255,${(0.05 + 0.95 * t).toFixed(3)})`;
+      }
+      ctx.fillRect(lab + j * cw + dpr, 4 * dpr + h * hh + dpr, cw - 2 * dpr, hh - 2 * dpr);
+    }
+  }
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) / rect.width * cv.width;
+    const y = (ev.clientY - rect.top) / rect.height * cv.height;
+    const j = Math.floor((x - lab) / cw), h = Math.floor((y - 4 * dpr) / hh);
+    if (h >= 0 && h < p3.heads && j >= 0 && j < n){
+      const tk2 = state.tokens[j];
+      $('#radarlegenda').textContent = `cabeça ${h + 1} · token ${j} `
+        + `'${visivel(tk2.texto || tk2.superficie)}' → peso ${dec(pesos[h][tok.i][j])}`;
+      cv.style.cursor = 'pointer';
+    }
+  };
+  cv.onmouseleave = () => {
+    $('#radarlegenda').textContent = 'passe o mouse; clique numa linha para abrir a cabeça';
+  };
+  cv.onclick = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const h = Math.floor(((ev.clientY - rect.top) / rect.height * cv.height - 4 * dpr) / hh);
+    if (h >= 0 && h < p3.heads) desenharSpark(h);
+  };
+  const tk = tokAtencao();
+  $('#radarleft').textContent = `camada ${p3.camada + 1} · '${visivel(tok.texto || tok.superficie)}' (posição ${tok.i})`;
+}
+
+function desenharSpark(h){
+  const tok = tokAtencao(); const pesos = p3.pesos.get(p3.camada);
+  if (!tok || !pesos) return;
+  const linha = pesos[h][tok.i];
+  $('#sparkwrap').hidden = false;
+  $('#sparktit').textContent = `cabeça ${h + 1} olhando '${visivel(tok.texto || tok.superficie)}' `
+    + `(camada ${p3.camada + 1}) — o peso que ela deu a cada token anterior`;
+  const box = $('#spark'); box.innerHTML = '';
+  const mx = Math.max(...linha.slice(0, tok.i + 1), 1e-9);
+  for (let j = 0; j <= tok.i; j++){
+    const tk = state.tokens[j];
+    const l = document.createElement('div'); l.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = `${j}·` + visivel(tk.texto || tk.superficie);
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (linha[j] / mx * 100).toFixed(1) + '%';
+    barra.appendChild(ench);
+    const c = document.createElement('div'); c.className = 'c'; c.textContent = dec(linha[j]);
+    l.append(t, barra, c);
+    l.onclick = async () => { p3.tok = tk; p3.pos = tk.i; $('#posslider').value = tk.i;
+      montarControles3(); await carregarRope(); desenharPasso3(); };
+    l.style.cursor = 'pointer';
+    box.appendChild(l);
+  }
+}
+
+/* ---- a matriz n×n da camada+cabeça ---- */
+function desenharMatriz(){
+  const pesos = p3.pesos.get(p3.camada); const cv = $('#matz');
+  if (!pesos) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const lado = cv.clientWidth || 560;
+  cv.width = cv.height = Math.round(lado * dpr);
+  const ctx = cv.getContext('2d'), lab = 24 * dpr, n = p3.n;
+  const cel = (cv.width - lab) / n, h = p3.head;
+  let mx = 1e-9; for (const linha of pesos[h]) for (const v of linha) mx = Math.max(mx, v);
+  ctx.fillStyle = '#0e1117'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = 'rgba(231,235,242,.5)'; ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+  for (let i = 0; i < n; i++){
+    ctx.fillText(String(i), 2 * dpr, lab + i * cel + cel * 0.62);
+    for (let j = 0; j < n; j++){
+      if (j > i) ctx.fillStyle = '#151a24';
+      else ctx.fillStyle = `rgba(91,147,255,${(pesos[h][i][j] / mx).toFixed(3)})`;
+      ctx.fillRect(lab + j * cel, lab + i * cel, cel - dpr, cel - dpr);
+    }
+  }
+  const tok = tokAtencao();
+  if (tok && tok.i < n){
+    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 1.6 * dpr;
+    ctx.strokeRect(lab, lab + tok.i * cel, n * cel - dpr, cel - dpr);
+  }
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) / rect.width * cv.width;
+    const y = (ev.clientY - rect.top) / rect.height * cv.height;
+    const j = Math.floor((x - lab) / cel), i = Math.floor((y - lab) / cel);
+    if (i >= 0 && i < n && j >= 0 && j < n){
+      const q = state.tokens[i], k = state.tokens[j];
+      $('#matlectura').textContent = j > i ? `'${visivel(q.texto||q.superficie)}' não enxerga `
+        + `'${visivel(k.texto||k.superficie)}' (futuro)`
+        : `'${visivel(q.texto||q.superficie)}' → '${visivel(k.texto||k.superficie)}': `
+          + dec(pesos[h][i][j]);
+    }
+  };
+  $('#matleft').textContent = `camada ${p3.camada + 1} · cabeça ${p3.head + 1}`;
+  $('#matright').textContent = `máx ${dec(mx)}`;
 }
 
 /* ---------------------------------------------------------------- ficha */

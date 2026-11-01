@@ -15,9 +15,11 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
 - **Modo didático em `/lab`** (o curso, passo a passo): o prompt vira tokens coloridos com
   os ids, a superfície byte-level e o vetor inicial de cada id (passo ①), e a frase vira uma
   **matriz desenhada** com as estatísticas da tabela inteira e a "lida de volta" tied (passo
-  ②) — lógica em `pingo.didatic`, que lê a tabela de embeddings do `.safetensors` na CPU. O
-  lab não toca na GPU nem no lock de geração: dá para abrir o laboratório enquanto uma
-  resposta é gerada no chat.
+  ②) — lógica em `pingo.didatic`, que lê a tabela de embeddings do `.safetensors` na CPU.
+  Os passos ①–② não tocam na GPU nem no lock de geração: dá para abrir o laboratório
+  enquanto uma resposta é gerada no chat. O passo ③ (RoPE + atenção com Q/K **reais**)
+  carrega o modelo de propósito no device do servidor, respeita o lock de geração (429 se o
+  chat está falando) e limita a frase a 64 tokens.
 
 Uso:
   uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
@@ -50,8 +52,8 @@ from tokenizers import Tokenizer
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pingo.didatic import (LIDA_PADRAO, MAX_LAB_CHARS, MAX_LAB_TOKENS,  # noqa: E402
-                           TabelaEmbeddings, VIZINHOS_PADRAO, buscar, tokenizar)
+from pingo.didatic import (LIDA_PADRAO, MAX_ATTN_TOKENS, MAX_LAB_CHARS,  # noqa: E402
+                           MAX_LAB_TOKENS, TabelaEmbeddings, VIZINHOS_PADRAO, buscar, tokenizar)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
@@ -92,6 +94,7 @@ class Server:
         self._loaded: Loaded | None = None
         self._tokenizadores: dict[str, Tokenizer] = {}
         self._tabelas: dict[str, TabelaEmbeddings] = {}
+        self._captura: tuple[tuple, dict] | None = None   # última captura de atenção (③)
         self._load_lock = threading.Lock()
         self._gen_lock = threading.Lock()
 
@@ -135,6 +138,36 @@ class Server:
                 tabela.vocabulario(tokenizer)
                 self._tabelas[model_id] = tabela
             return tabela
+
+    # -- captura de atenção (passo ③): a ÚNICA rota do lab que carrega o modelo --
+    def captura_atencao(self, model_id: str, ids: list[int]) -> dict:
+        """Um forward com `capture`: Q/K pré/pós-RoPE e os pesos de atenção por camada.
+
+        Diferente do resto do lab (que vive só do `.safetensors` na CPU), o passo ③ mostra
+        Q e K **reais** — então ele carrega o modelo na GPU (com o aviso do professor
+          valendo) e obedece ao `gen_lock` (a rota devolve 429 se o chat está gerando).
+        Guarda só a última captura (chave = modelo+ids) — trocou o texto, refaz o forward.
+        """
+        chave = (model_id, tuple(ids))
+        if self._captura is not None and self._captura[0] == chave:
+            return self._captura[1]
+        carregado = self.carregar(model_id)          # o lock de carga é do próprio carregar
+        modelo = carregado.model
+        with torch.no_grad():
+            cap: list[dict] = [{} for _ in range(modelo.config.num_hidden_layers)]
+            modelo(torch.tensor([ids], device=next(modelo.parameters()).device), capture=cap)
+        saida = {
+            "heads": modelo.config.num_attention_heads,
+            "head_dim": modelo.config.head_dim,
+            "theta": float(modelo.config.rope_theta),
+            "camadas": [{"w": c["w"][0].float().cpu(),           # [H,T,T]
+                         "q_lin": c["q_lin"][0].float().cpu(),    # [H,T,D] pré-RoPE
+                         "q": c["q"][0].float().cpu(),            # pós-RoPE
+                         "k_lin": c["k_lin"][0].float().cpu(),
+                         "k": c["k"][0].float().cpu()} for c in cap],
+        }
+        self._captura = (chave, saida)
+        return saida
 
     # -- ciclo de vida -------------------------------------------------
     def carregar(self, model_id: str) -> Loaded:
@@ -418,6 +451,76 @@ def create_app(server: Server | None = None) -> Flask:
         except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
         saida["modelo"] = model_id
+        return jsonify(saida)
+
+    # -- passo ③: RoPE + atenção (aqui o lab carrega o modelo — com gen_lock e aviso) --
+
+    @app.post("/api/lab/attn")
+    def lab_attn():
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (dados.get("ids") or [])][:MAX_ATTN_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            cap = srv.captura_atencao(model_id, ids)
+            camada = int(_num(dados, "camada", 0, 0, 999, inteiro=True))
+            n_camadas = len(cap["camadas"])
+            if not 0 <= camada < n_camadas:
+                return jsonify({"erro": f"camada fora do intervalo (0..{n_camadas - 1})"}), 400
+            saida = {"modelo": model_id, "camada": camada, "n_camadas": n_camadas,
+                     "heads": cap["heads"], "n": len(ids),
+                     "pesos": [[[round(float(v), 5) for v in linha] for linha in cabeca]
+                               for cabeca in cap["camadas"][camada]["w"]]}
+        except Exception as exc:  # noqa: BLE001 — um forward real falha de muitos jeitos
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
+        return jsonify(saida)
+
+    @app.get("/api/lab/rope")
+    def lab_rope():
+        srv: Server = app.config["PINGO"]
+        model_id, erro, status = _modelo_pedido(srv, request.args)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (request.args.get("ids") or "").replace(" ", "").split(",")
+                   if x][:MAX_ATTN_TOKENS]
+        except ValueError:
+            return jsonify({"erro": "ids tem que ser inteiros separados por vírgula"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        camada = int(_num(request.args, "camada", 0, 0, 999, inteiro=True))
+        head = int(_num(request.args, "head", 0, 0, 999, inteiro=True))
+        i = int(_num(request.args, "i", 0, 0, 999, inteiro=True))
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            cap = srv.captura_atencao(model_id, ids)
+            if not (0 <= camada < len(cap["camadas"]) and 0 <= head < cap["heads"]
+                    and 0 <= i < len(ids)):
+                return jsonify({"erro": "camada/head/i fora do intervalo"}), 400
+            c, hd, theta = cap["camadas"][camada], cap["head_dim"], cap["theta"]
+            valores = lambda t: [round(float(x), 5) for x in t.tolist()]
+            saida = {"modelo": model_id, "camada": camada, "head": head, "i": i,
+                     "pos": i, "head_dim": hd, "theta": theta,
+                     "inv_freq": [round(theta ** (-2.0 * j / hd), 8)
+                                  for j in range(hd // 2)],
+                     "q_lin": valores(c["q_lin"][head][i]), "q": valores(c["q"][head][i]),
+                     "k_lin": valores(c["k_lin"][head][i]), "k": valores(c["k"][head][i])}
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
         return jsonify(saida)
 
     @app.get("/api/lab/lookup")

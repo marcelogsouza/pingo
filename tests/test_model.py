@@ -276,3 +276,54 @@ def test_save_load_roundtrip(tiny_model, tmp_path):
     with torch.no_grad():
         assert _allclose_maxdiff(tiny_model(x).logits, reloaded(x).logits) < 1e-6
     assert reloaded.lm_head.weight is reloaded.embed.weight
+
+
+# ------------------------------------------------- captura de atenção (lab passo ③)
+
+
+def test_capture_nao_muda_os_logits_e_preenche_por_camada(tiny_model):
+    """O caminho normal não muda uma linha; a captura é uma carona só do prefill."""
+    torch.manual_seed(3)
+    ids = torch.randint(0, 101, (1, 9))
+    sem = tiny_model(ids).logits
+    cap = [{} for _ in range(2)]
+    com = tiny_model(ids, capture=cap).logits
+    assert torch.equal(sem, com)                        # bit a bit, com captura pedida
+    assert set(cap[0]) == {"q_lin", "q", "k_lin", "k", "w"}
+    assert cap[0]["w"].shape == (1, 4, 9, 9)            # [B, H, T, T]
+    assert cap[0]["q_lin"].shape == (1, 4, 9, 8)        # head_dim = 32/4 = 8
+
+
+def test_capture_pesos_sao_probabilidades_casuais(tiny_model):
+    torch.manual_seed(4)
+    cap = [{} for _ in range(2)]
+    tiny_model(torch.randint(0, 101, (1, 9)), capture=cap)
+    w = cap[0]["w"][0]                                  # B=1
+    assert torch.allclose(w.sum(-1), torch.ones(4, 9), atol=1e-5)
+    triu = torch.triu(torch.ones(9, 9, dtype=torch.bool), diagonal=1)
+    assert (w[:, triu] == 0).all()                      # o triângulo do futuro está vazio
+    assert torch.allclose(w[:, 0, 0], torch.ones(4))    # o token 0 só enxerga a si mesmo
+
+
+def test_capture_q_pos_rope_e_a_rota_oficial_do_rope(tiny_model):
+    """O `q` capturado é o `q_lin` rotacionado pela RoPE do próprio modelo — é isso que
+    o relógio do lab vai desenhar; se divergir do `apply_rope`, a aula mostra mentira."""
+    torch.manual_seed(5)
+    pos = torch.arange(9).unsqueeze(0)
+    cap = [{} for _ in range(2)]
+    tiny_model(torch.randint(0, 101, (1, 9)), position_ids=pos, capture=cap)
+    cos, sin = tiny_model.rope.tables(pos)
+    assert torch.allclose(cap[0]["q"], apply_rope(cap[0]["q_lin"], cos, sin), atol=1e-6)
+    # e as normas são preservadas — rotação não estica nada (o relógio é fiel)
+    assert torch.allclose(cap[0]["q_lin"].norm(dim=-1), cap[0]["q"].norm(dim=-1), atol=1e-5)
+
+
+def test_capture_recusa_cache_padding_e_contagem_errada(tiny_model):
+    with pytest.raises(ValueError):
+        tiny_model(torch.tensor([[1, 2, 3]]), capture=[{}, {}],
+                   attention_mask=torch.ones(1, 3, dtype=torch.long))
+    with pytest.raises(ValueError):
+        tiny_model(torch.tensor([[1, 2, 3]]), capture=[{}])           # dicts a menos
+    with pytest.raises(ValueError):
+        tiny_model(torch.tensor([[1, 2, 3]]), cache=PingoCache(tiny_model.config, batch_size=1),
+                   capture=[{}, {}])
