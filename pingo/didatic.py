@@ -1,9 +1,12 @@
-"""Modo didático (passos 1–2) — do texto aos ids, ao vetor de cada id e à tabela inteira.
+"""Modo didático (passos ①–⑤) — do texto aos ids, aos vetores, ao bloco e às notas do lm head.
 
 O curso do Pingo precisa mostrar o que o modelo *vê* antes de qualquer conta: o BPE
 byte-level fatiando a frase em pedaços (com o id de cada um), o vetor que cada id carrega
 na tabela de embeddings, e a tabela inteira de uma vez — normas, histograma e o produto
-escalar que um `lm_head` tied leria de volta daquele vetor (passo ②).
+escalar que um `lm_head` tied leria de volta daquele vetor (passo ②). Os passos ③–⑤
+trabalham com a **captura de um forward real** (entregue pelo `Server` da WebUI): as
+funções daqui só desenham os tensores capturados — `ficha_bloco` para o bloco (④) e
+`ficha_lmhead` para a norm final + os logits (⑤).
 
 Duas decisões estruturam o módulo:
 
@@ -455,6 +458,75 @@ def ficha_bloco(camada: dict[str, torch.Tensor], ids: list[int],
                 "delta": round(float(camada["m"][i].norm()), 4),
                 "residuo": round(float(camada["x1"][i].norm()), 4)},
     }
+
+
+# ------------------------------------------------------------------ lm head (passo ⑤)
+
+TOPK_LMHEAD = 10         # quantos logits abrem a tela (o "quem ganhou" do vocab inteiro)
+
+
+def ficha_lmhead(final: dict[str, torch.Tensor], ids: list[int],
+                 id_para_token: dict[int, str], i: int,
+                 k: int = TOPK_LMHEAD, bins: int = FAIXA_BINS) -> dict[str, Any]:
+    """O lm head do token `i` (passo ⑤): a norm final + as notas reais de cada token do vocab.
+
+    `final` é o que o `Server` guarda do MESMO forward dos passos ③–④: `x2` da última camada
+    ([T, D]), `nfinp`/`nfin` (a norm final antes/depois do γ) e `logits` — os que o próprio
+    forward produziu ([T, V]), não uma recomputação. A lição por posição: depois da última
+    régua, o vetor é lido pela MESMA tabela do passo ① (tied) e cada linha do vocab recebe
+    uma nota; o lm head não escolhe nada — a escolha é o passo ⑥.
+
+    `proximo` é o gancho do professor-forcing: para posições que têm sucessor na frase, o
+    logit e o **rank** do token que veio depois — "o que o modelo achava que vinha aqui".
+    """
+    x2, nfinp, nfin, logits = final["x2"], final["nfinp"], final["nfin"], final["logits"]
+    n, d, vocab = int(x2.shape[0]), int(x2.shape[-1]), int(logits.shape[-1])
+    if not 0 <= i < n:
+        raise IndexError(f"token {i} fora da frase (0..{n - 1})")
+    if len(ids) < n:
+        raise IndexError("ids mais curto que a captura")
+
+    nomes = [id_para_token.get(int(t), f"<id {t}>") for t in ids[:n]]
+    col = {k_: [round(float(v), 4) for v in final[k_][:n].norm(dim=-1)]
+           for k_ in ("x2", "nfinp", "nfin")}
+    tokens = [{"i": j, "id": int(ids[j]), "token": nome, "texto": texto_legivel(nome),
+               **{k_: col[k_][j] for k_ in col}}
+              for j, nome in enumerate(nomes)]
+
+    linha = logits[i]
+    b = max(1, min(int(bins), vocab))
+    k = max(1, min(int(k), 50))
+    topk = torch.topk(linha, min(k, vocab))
+    top = [{"id": int(j), "token": id_para_token.get(int(j), f"<id {j}>"),
+            "texto": texto_legivel(id_para_token.get(int(j), f"<id {j}>")),
+            "logit": round(float(linha[int(j)]), 4)} for j in topk.indices.tolist()]
+
+    proximo = None       # o que a frase realmente tinha na sequência (professor forcing)
+    if i + 1 < n:
+        nid = int(ids[i + 1])
+        proximo = {"id": nid, "token": id_para_token.get(nid, f"<id {nid}>"),
+                   "texto": texto_legivel(id_para_token.get(nid, f"<id {nid}>")),
+                   "logit": round(float(linha[nid]), 4),
+                   "rank": int((linha > linha[nid]).sum()) + 1}
+
+    saida: dict[str, Any] = {
+        "n": n, "d": d, "vocab": vocab, "bins": b, "i": int(i),
+        "raiz_d": round(math.sqrt(d), 4),
+        "tokens": tokens,
+        "norma": {"maior_x2": max(t["x2"] for t in tokens),
+                  "maior_nfin": max(t["nfin"] for t in tokens)},
+        "top": top, "proximo": proximo,
+        "faixa": faixa_de(linha, b),
+        "escala": round(float(linha.abs().max()), 4),
+        "estat": {"media": round(float(linha.mean()), 4), "min": round(float(linha.min()), 4),
+                  "max": round(float(linha.max()), 4), "std": round(float(linha.std()), 4)},
+    }
+    if "g_fin" in final:
+        g = final["g_fin"]
+        saida["gamma"] = {"media": round(float(g.mean()), 4), "min": round(float(g.min()), 4),
+                          "max": round(float(g.max()), 4), "std": round(float(g.std()), 4),
+                          "faixa": faixa_de(g, min(b, d))}
+    return saida
 
 
 # ------------------------------------------------------------------ busca no vocab

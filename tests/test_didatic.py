@@ -20,7 +20,7 @@ from tokenizers import Regex, Tokenizer, models, pre_tokenizers
 
 from pingo.config import PingoConfig
 from pingo.didatic import (MAX_LAB_TOKENS, TabelaEmbeddings, buscar, bytes_para_superficie,
-                           categoria, especial_ids, ficha_bloco, faixa_de,
+                           categoria, especial_ids, ficha_bloco, ficha_lmhead, faixa_de,
                            superficie_para_bytes, texto_legivel, tokenizar)
 from pingo.model import PingoLM
 
@@ -284,6 +284,66 @@ def test_ficha_bloco_fora_da_frase_e_erro_claro(tmp_path):
         ficha_bloco(camada, ids, tabela.id_para_token, 9)
     with pytest.raises(IndexError):
         ficha_bloco(camada, ids[:2], tabela.id_para_token, 0)   # ids mais curto que a captura
+
+
+# ------------------------------------------------------------------ passo ⑤
+
+
+def _final_tiny(tmp_path) -> tuple[dict, list[int]]:
+    """O que o `Server` guarda de ⑤ — `x2` da última camada + `nfinp/nfin/logits/g_fin` —
+    tudo do mesmo forward com `capture` no checkpoint tiny."""
+    d = checkpoint_tiny(tmp_path)
+    modelo = PingoLM.from_pretrained(d, torch_dtype=torch.float32)
+    ids = [4, 9, 10, 5]
+    cap = [{}]
+    with torch.no_grad():
+        out = modelo(torch.tensor([ids]), capture=cap)
+    final = {k: cap[0][k][0].float() for k in ("x2", "nfinp", "nfin")}
+    final["logits"] = out.logits[0].float()
+    final["g_fin"] = modelo.norm.weight.detach().float()
+    return final, ids
+
+
+def test_ficha_lmhead_a_regua_final_e_os_logits_reais(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    final, ids = _final_tiny(tmp_path)
+    f = ficha_lmhead(final, ids, tabela.id_para_token, 1, k=5, bins=8)
+    assert (f["n"], f["d"], f["vocab"], f["i"]) == (4, 16, len(VOCAB), 1)
+    assert f["raiz_d"] == pytest.approx(16 ** 0.5, abs=0.01)
+    # a régua final: normas batem com os tensores capturados, e o RMSNorm puro devolve √d
+    assert [l["id"] for l in f["tokens"]] == ids
+    for j, l in enumerate(f["tokens"]):
+        assert l["x2"] == pytest.approx(float(final["x2"][j].norm()), abs=5e-4)
+        assert l["nfin"] == pytest.approx(float(final["nfin"][j].norm()), abs=5e-4)
+        assert l["nfinp"] == pytest.approx(f["raiz_d"], abs=0.1)
+    # os logits do próprio forward, ordenados — o "quem ganhou" da posição
+    linha = final["logits"][1]
+    assert [x["logit"] for x in f["top"]] == [round(float(v), 4)
+                                              for v in linha.topk(5).values.tolist()]
+    assert [x["logit"] for x in f["top"]] == sorted((x["logit"] for x in f["top"]), reverse=True)
+    assert all(0 <= x["id"] < len(VOCAB) and x["token"] in VOCAB for x in f["top"])
+    assert len(f["faixa"]) == 8 and f["escala"] == pytest.approx(float(linha.abs().max()), abs=5e-4)
+    assert f["estat"]["max"] == pytest.approx(float(linha.max()), abs=5e-4)
+    # professor forcing: o sucessor na frase (i=1 → "mundo") com nota e rank
+    p = f["proximo"]
+    assert (p["id"], p["token"]) == (10, "mundo")
+    assert p["logit"] == pytest.approx(float(linha[10]), abs=5e-4)
+    assert 1 <= p["rank"] <= len(VOCAB)
+    assert p["rank"] == int((linha > linha[10]).sum()) + 1
+    # γ da norm final: estatísticas + faixa (o γ que desenha a última régua)
+    assert f["gamma"]["media"] == pytest.approx(float(final["g_fin"].mean()), abs=1e-3)
+    assert len(f["gamma"]["faixa"]) == 8
+    # última posição não tem sucessor — é a posição da geração (o cardápio do ⑥)
+    assert ficha_lmhead(final, ids, tabela.id_para_token, 3)["proximo"] is None
+
+
+def test_ficha_lmhead_fora_da_frase_e_erro_claro(tmp_path):
+    tabela = TabelaEmbeddings.do_checkpoint(checkpoint_tiny(tmp_path)).vocabulario(tokenizer_fake())
+    final, ids = _final_tiny(tmp_path)
+    with pytest.raises(IndexError):
+        ficha_lmhead(final, ids, tabela.id_para_token, 9)
+    with pytest.raises(IndexError):
+        ficha_lmhead(final, ids[:2], tabela.id_para_token, 0)   # ids mais curto que a captura
 
 
 # ------------------------------------------------------------------ busca

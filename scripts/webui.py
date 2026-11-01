@@ -21,7 +21,9 @@ Serve uma página de chat e uma API de streaming (SSE) por cima do `pingo.genera
   carrega o modelo de propósito no device do servidor, respeita o lock de geração (429 se o
   chat está falando) e limita a frase a 64 tokens. O passo ④ (RMSNorm + SwiGLU) pega
   carona no MESMO forward: a captura do ③ já entrega o bloco inteiro — normas antes/depois,
-  γ e as 2.304 portas do MLP do token escolhido.
+  γ e as 2.304 portas do MLP do token escolhido. O passo ⑤ (lm head) pega a mesma carona:
+  a norm final e os **logits** daquele forward (o `lm_head` é a própria tabela do passo ①
+  — tied — lida de volta com o vetor final de cada posição).
 
 Uso:
   uv run python scripts/webui.py                      # 0.0.0.0:8010 (LAN + localhost)
@@ -55,8 +57,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pingo.didatic import (LIDA_PADRAO, MAX_ATTN_TOKENS, MAX_LAB_CHARS,  # noqa: E402
-                           MAX_LAB_TOKENS, TabelaEmbeddings, VIZINHOS_PADRAO, buscar,
-                           ficha_bloco, tokenizar)
+                           MAX_LAB_TOKENS, TabelaEmbeddings, TOPK_LMHEAD, VIZINHOS_PADRAO,
+                           buscar, ficha_bloco, ficha_lmhead, tokenizar)
 from pingo.generate import generate_stream  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
@@ -142,15 +144,19 @@ class Server:
                 self._tabelas[model_id] = tabela
             return tabela
 
-    # -- captura de atenção/bloco (passos ③–④): a ÚNICA rota do lab que carrega o modelo --
+    # -- captura de atenção/bloco/lm head (③–⑤): a ÚNICA rota do lab que carrega o modelo --
     def captura_atencao(self, model_id: str, ids: list[int]) -> dict:
-        """Um forward com `capture`: Q/K pré/pós-RoPE, pesos de atenção e o bloco inteiro.
+        """Um forward com `capture`: Q/K pré/pós-RoPE, pesos de atenção, o bloco inteiro,
+        a norm final e os **logits** daquele forward.
 
-        Diferente do resto do lab (que vive só do `.safetensors` na CPU), ③ e ④ mostram
+        Diferente do resto do lab (que vive só do `.safetensors` na CPU), ③, ④ e ⑤ mostram
         números **reais** — então carregamos o modelo na GPU (com o aviso do professor
         valendo) e obedecemos ao `gen_lock` (a rota devolve 429 se o chat está gerando).
         Guarda só a última captura (chave = modelo+ids) — trocou o texto, refaz o forward;
-        o ④ veio de carona no mesmo forward do ③ (por isso os dois falam com o mesmo cached).
+        o ④ e o ⑤ vieram de carona no mesmo forward do ③ (por isso os três falam com o
+        mesmo cached). Os logits do ⑤ são os que o **próprio forward produziu**
+        (`out.logits`), não uma recomputação — é a nota real que o lm head tied deu a cada
+        token do vocab.
         """
         chave = (model_id, tuple(ids))
         if self._captura is not None and self._captura[0] == chave:
@@ -159,7 +165,8 @@ class Server:
         modelo = carregado.model
         with torch.no_grad():
             cap: list[dict] = [{} for _ in range(modelo.config.num_hidden_layers)]
-            modelo(torch.tensor([ids], device=next(modelo.parameters()).device), capture=cap)
+            out = modelo(torch.tensor([ids], device=next(modelo.parameters()).device),
+                         capture=cap)
         chaves = ("w", "q_lin", "q", "k_lin", "k",                               # ③
                   "x0", "n1p", "n1", "a", "x1", "n2p", "n2", "g", "u", "s",      # ④
                   "m", "x2")
@@ -167,6 +174,9 @@ class Server:
             "heads": modelo.config.num_attention_heads,
             "head_dim": modelo.config.head_dim,
             "theta": float(modelo.config.rope_theta),
+            "logits": out.logits[0].float().cpu(),                        # ⑤ [T, vocab]
+            "fin": {k: cap[-1][k][0].float().cpu() for k in ("nfinp", "nfin")},  # ⑤ norm final
+            "g_fin": modelo.norm.weight.detach().float().cpu(),           # ⑤ o γ da norm final
             "camadas": [{**{k: c[k][0].float().cpu() for k in chaves},          # sem a dimensão B
                          "g_attn": blk.norm_attn.weight.detach().float().cpu(),  # o γ de cada norma
                          "g_mlp": blk.norm_mlp.weight.detach().float().cpu()}
@@ -556,6 +566,40 @@ def create_app(server: Server | None = None) -> Flask:
                                 srv.tabela_de(model_id).id_para_token, tok_i)
             saida.update({"modelo": model_id, "camada": camada,
                           "n_camadas": len(cap["camadas"])})
+        except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
+        except Exception as exc:  # noqa: BLE001 — um forward real falha de muitos jeitos
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+        finally:
+            srv.gen_lock.release()
+        return jsonify(saida)
+
+    # -- passo ⑤: lm head — carona no MESMO forward: norm final + logits reais --
+
+    @app.post("/api/lab/lmhead")
+    def lab_lmhead():
+        srv: Server = app.config["PINGO"]
+        dados = request.get_json(silent=True) or {}
+        model_id, erro, status = _modelo_pedido(srv, dados)
+        if erro:
+            return jsonify({"erro": erro}), status
+        try:
+            ids = [int(x) for x in (dados.get("ids") or [])][:MAX_ATTN_TOKENS]
+        except (TypeError, ValueError):
+            return jsonify({"erro": "ids tem que ser uma lista de inteiros"}), 400
+        if not ids:
+            return jsonify({"erro": "mande os ids da frase"}), 400
+        tok_i = int(_num(dados, "i", 0, 0, MAX_ATTN_TOKENS - 1, inteiro=True))
+        k = int(_num(dados, "k", TOPK_LMHEAD, 1, 50, inteiro=True))
+        if not srv.gen_lock.acquire(blocking=False):
+            return jsonify({"erro": "o modelo está gerando no chat — espere a resposta acabar"}), 429
+        try:
+            cap = srv.captura_atencao(model_id, ids)
+            ultimo = cap["camadas"][-1]
+            saida = ficha_lmhead({"x2": ultimo["x2"], "logits": cap["logits"],
+                                  "g_fin": cap["g_fin"], **cap["fin"]},
+                                 ids, srv.tabela_de(model_id).id_para_token, tok_i, k=k)
+            saida.update({"modelo": model_id, "n_camadas": len(cap["camadas"])})
         except (IndexError, KeyError, FileNotFoundError, ValueError) as exc:
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 400
         except Exception as exc:  # noqa: BLE001 — um forward real falha de muitos jeitos

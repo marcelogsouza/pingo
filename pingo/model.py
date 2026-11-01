@@ -257,10 +257,11 @@ class PingoLM(PreTrainedModel):
         0..n-1 e o RoPE não precisa de deslocamento. `labels` usa `-100` nas posições que não
         devem contribuir para a loss (prompt e padding) — default do `cross_entropy`.
 
-        `capture` (modo didático, passos ③–④): lista de um dict vazio por bloco; cada um sai
+        `capture` (modo didático, passos ③–⑤): lista de um dict vazio por bloco; cada um sai
         com `q_lin/q/k_lin/k` e `w` (as probabilidades de atenção do prefill) e com o bloco
-        inteiro — `x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`. Exige B=1, sem padding e sem cache —
-        o forward normal (treino/geração) não toca nisso.
+        inteiro — `x0/n1p/n1/a/x1/n2p/n2/g/u/s/m/x2`. O **último** dict também sai com
+        `nfinp/nfin` — a norm final do modelo antes/depois do γ (passo ⑤). Exige B=1, sem
+        padding e sem cache — o forward normal (treino/geração) não toca nisso.
         """
         b, t = input_ids.shape
         if capture is not None:
@@ -293,7 +294,11 @@ class PingoLM(PreTrainedModel):
             x = blk(x, cos, sin, cache, attn_mask, None if capture is None else capture[i])
         if cache is not None:
             cache.commit()
-        x = self.norm(x)
+        if capture is not None:      # ⑤: a norm final também pega carona no último dict
+            x = self.norm(x, capture=capture[-1], chave="nfinp")
+            capture[-1]["nfin"] = x.detach()
+        else:
+            x = self.norm(x)
         logits = self.lm_head(x)
 
         loss = None

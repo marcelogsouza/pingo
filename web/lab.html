@@ -1,11 +1,12 @@
 <!doctype html>
-<!-- Modo didático do Pingo — passos ①–④: do texto ao id, ao vetor, à atenção e ao bloco.
-     Servida em /lab pela WebUI (scripts/webui.py); a lógica vem de pingo/didatic.py. -->
+<!-- Modo didático do Pingo — passos ①–⑤: do texto ao id, ao vetor, à atenção, ao bloco e
+     aos logits do lm head. Servida em /lab pela WebUI (scripts/webui.py); a lógica vem de
+     pingo/didatic.py. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pingo — laboratório · do token ao SwiGLU</title>
+<title>Pingo — laboratório · do token ao logit</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔬</text></svg>">
 <style>
   :root{
@@ -172,6 +173,7 @@
   /* passo ④: régua de normas + faixas do SwiGLU */
   .nrow{display:grid;grid-template-columns:minmax(88px,150px) repeat(4,1fr);gap:10px;
     align-items:center;padding:3px 6px;border-radius:9px}
+  .nrow.fim{grid-template-columns:minmax(88px,150px) repeat(3,1fr)}
   .nrow:hover{background:var(--bg2)}
   .nhead{color:var(--dim);font-size:10.5px;letter-spacing:.4px;text-transform:uppercase}
   .nhead:hover{background:none}
@@ -184,6 +186,7 @@
   .nbar.del i{background:linear-gradient(90deg,#7a2f5a,var(--rose))}
   .nnum{font:11px var(--mono);color:var(--muted);min-width:46px;text-align:right}
   canvas.faixa4{width:100%;height:30px;border-radius:6px;background:#0e1117;margin-top:4px}
+  #logitstrip{width:100%;height:44px;border-radius:8px;background:#0e1117;margin-top:6px}
   /* busca */
   .busca{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
   .busca input{flex:1;min-width:220px;border:1px solid var(--line2);background:var(--bg2);
@@ -433,9 +436,73 @@
   </section>
   </div>
 
+  <div id="p5" hidden>
+  <section class="card">
+    <h2>5 · O lm head — a mesma tabela, lida até o fim</h2>
+    <p class="hint">As 12 camadas acabam — e o <code>lm_head</code> <b>não é uma camada
+      nova</b>: é a <b>mesma tabela do passo ①</b> (são literalmente os mesmos pesos,
+      <i>tied embeddings</i>) lida de volta. O vetor final de cada posição encontra as
+      <span id="b5vocab">16.387</span> linhas da tabela e cada linha do vocab recebe uma
+      <b>nota</b> — o <i>logit</i>. É a prévia que a “lida de volta” do passo ② anunciou,
+      agora com o vetor <b>depois</b> de todo o modelo. O lm head não escolhe nada: quem
+      escolhe é o passo ⑥. Escolha a posição; os números vêm do <b>mesmo forward real</b>
+      dos passos ③ e ④.</p>
+    <div class="mchips" id="toks5"></div>
+    <div class="hint2" id="b5nota"></div>
+  </section>
+
+  <section class="card">
+    <h2>A última régua — o RMSNorm final, e só depois a tabela</h2>
+    <p class="hint">Depois da última camada ainda passa <b>um RMSNorm</b> (o
+      <code>norm</code> do modelo): é ele que entrega o vetor que o lm head vai ler. A
+      régua é a mesma do passo ④ — ‖x‖ entra torto, o RMSNorm <b>puro</b> devolve
+      <span id="b5raiz">√d</span> para todos, e o <b>γ final</b>, aprendido no treino,
+      modula dimensão a dimensão.</p>
+    <div class="nrow fim nhead"><span>token</span><span>‖x que entra‖</span>
+      <span>‖RMSNorm puro‖</span><span>‖com γ‖ — o vetor lido</span></div>
+    <div id="b5regua"></div>
+    <div class="tit">γ da <span id="b5gqual">norma final</span> — o valor aprendido de cada
+      uma das <span id="b5gd">896</span> dimensões</div>
+    <canvas class="faixa4" id="b5gamma"></canvas>
+    <div class="escala"><span id="b5gesq">−</span><span id="b5glegenda"></span>
+      <span id="b5gesd">+</span></div>
+  </section>
+
+  <section class="card">
+    <h2>Os <span id="b5nvocab">16.387</span> logits da posição escolhida</h2>
+    <p class="hint">Cada pingo abaixo é a nota que <b>um token do vocab</b> recebeu — o
+      vocab inteiro de uma vez, resumido (cada pingo é o maior |valor| de um grupo de
+      linhas). A lista ao lado são os <b>dez mais altos</b>: os candidatos que o passo ⑥
+      vai pesar. Clique num token para abrir a ficha dele — é a mesma tabela do passo ①.</p>
+    <canvas id="logitstrip"></canvas>
+    <div class="escala"><span id="b5esq">−</span><span id="b5lectura">passe o mouse</span>
+      <span id="b5esd">+</span></div>
+    <div class="tit">quem ganhou — os 10 logits mais altos</div>
+    <div class="vizinhos" id="b5top"></div>
+    <div class="grade" id="b5kvs"></div>
+    <div class="hint2" id="b5ganota"></div>
+  </section>
+
+  <section class="card">
+    <h2>A mesma tabela, lidas de voltas diferentes — o modelo <i>mexeu</i> no vetor</h2>
+    <p class="hint">Dois produtos escalares contra a <b>mesma tabela</b>, para o token da
+      posição escolhida: à esquerda a nota do <b>vetor inicial</b> (a prévia do passo ②);
+      à direita o logit real do <b>vetor final</b>, depois das 12 camadas. Se as ordens
+      fossem iguais, as camadas não teriam feito nada.</p>
+    <div class="duo">
+      <div><div class="tit">② vetor inicial · nota v·w</div>
+        <div class="vizinhos" id="b5antes"></div></div>
+      <div><div class="tit">⑤ vetor final · logit real</div>
+        <div class="vizinhos" id="b5depois"></div></div>
+    </div>
+    <div class="hint2" id="b5comnota"></div>
+  </section>
+  </div>
+
   <p class="rodape">tokenização e embeddings por <code>pingo/didatic.py</code> · BPE byte-level
     de <span id="vocab">16.000</span> pedaços · passos ① e ② leem o <code>.safetensors</code>
-    sem GPU; os passos ③ e ④ rodam um forward real no device do servidor</p>
+    sem GPU; os passos ③, ④ e ⑤ rodam um forward real no device do servidor (④ e ⑤ de
+    carona no do ③)</p>
 </div>
 
 <div id="ficha">
@@ -468,7 +535,7 @@ const CAT = {
 };
 const PASSOS = [
   ['tokenização', true], ['embedding (896)', true], ['RoPE + atenção', true],
-  ['RMSNorm + SwiGLU', true], ['lm head — a mesma tabela!', false],
+  ['RMSNorm + SwiGLU', true], ['lm head — a mesma tabela!', true],
   ['amostragem', false], ['loop: o token volta', false],
 ];
 const EXEMPLOS = [
@@ -505,10 +572,12 @@ function irPara(n){
   $('#p2').hidden = n !== 2;
   $('#p3').hidden = n !== 3;
   $('#p4').hidden = n !== 4;
+  $('#p5').hidden = n !== 5;
   [...$('#steps').children].forEach((el, i) => el.classList.toggle('atual', i + 1 === n));
   if (n === 2) desenharPasso2();
   if (n === 3) garantirAtencao();
   if (n === 4) garantirBloco();
+  if (n === 5) garantirLmhead();
 }
 
 /* ---------------------------------------------------------------- modelos */
@@ -570,9 +639,11 @@ function desenharTudo(dados){
   if (p3.tok !== null) p3.tok = null;
   p3.pesos.clear(); p3.rope.clear(); p3.pronto = false;   // o forward velho não vale mais
   p4.dados = null; p4.tok = null;                        // idem para o passo ④
+  p5.dados = null; p5.tok = null;                        // idem para o passo ⑤
   if (state.passo === 2) desenharPasso2();
   if (state.passo === 3) garantirAtencao();
   if (state.passo === 4) garantirBloco();
+  if (state.passo === 5) garantirLmhead();
 }
 
 function desenharMedidor(dados, s){
@@ -1298,6 +1369,181 @@ function desenharSwiGLU(d){
     + `<b>${d.camada + 1}</b>: o gate deixou de pé só <b>${fmt(d.mlp.abertas)}</b> das `
     + `${fmt(d.hidden)} portas com força ≥ 10% da maior. É assim que o modelo guarda fato: `
     + `uma palavra acende um punhado de neurônios, não todos.`;
+}
+
+/* ------------------------------------------------ passo ⑤ · lm head (carona do mesmo forward) */
+const p5 = {tok: null, dados: null};
+
+function tokLmhead(){
+  if (p5.tok && state.tokens.includes(p5.tok)) return p5.tok;
+  p5.tok = state.tokens.find(t => t.kind !== 'especial') || state.tokens[0] || null;
+  return p5.tok;
+}
+
+async function garantirLmhead(){
+  if (!state.tokens.length) return;
+  if (p5.dados && p5.dados.modelo === state.modelo){ desenharPasso5(); return; }
+  await carregarLmhead();
+}
+
+async function carregarLmhead(){
+  const t = tokLmhead(); if (!t) return;
+  let r;
+  try {
+    r = await fetch('/api/lab/lmhead', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({modelo: state.modelo, ids: state.tokens.map(x => x.id), i: t.i})});
+  } catch (e){ erro('servidor fora do ar: ' + e.message); return; }
+  const d = await r.json();
+  if (!r.ok){ erro(d.erro || `HTTP ${r.status}`); return; }
+  limpaErro();
+  p5.dados = d;
+  desenharPasso5();
+}
+
+function montarControles5(){
+  const d = p5.dados;
+  const box = $('#toks5'); box.innerHTML = '';
+  state.tokens.slice(0, d.n).forEach((tk) => {
+    const b = document.createElement('button');
+    b.className = 'mchip' + (tk === p5.tok ? ' on' : '');
+    b.style.setProperty('--c', CAT[tk.kind] || '#5b93ff');
+    b.textContent = visivel(tk.texto || tk.superficie);
+    b.onclick = () => { p5.tok = tk; carregarLmhead(); };
+    box.appendChild(b);
+  });
+  const cortado = d.n < state.tokens.length ? ` (frase cortada em ${d.n} tokens)` : '';
+  $('#b5nota').textContent = `norm final + logits do MESMO forward do passo ③ · ${d.n} posições `
+    + `× ${fmt(d.vocab)} notas do vocab · device do servidor: ${state.device || '?'}${cortado}`;
+  $('#b5vocab').textContent = fmt(d.vocab);
+  $('#b5nvocab').textContent = fmt(d.vocab);
+}
+
+function desenharPasso5(){
+  const d = p5.dados; if (!d) return;
+  montarControles5();
+  desenharNormaFinal(d);
+  desenharLogits(d);
+  desenharLidas(d);
+}
+
+/* ---- a última régua: o RMSNorm final antes da tabela ---- */
+function desenharNormaFinal(d){
+  $('#b5raiz').textContent = dec(d.raiz_d);
+  let mx = 1e-9;
+  for (const l of d.tokens) mx = Math.max(mx, l.x2, l.nfinp, l.nfin);
+  const box = $('#b5regua'); box.innerHTML = '';
+  for (const l of d.tokens){
+    const row = document.createElement('div'); row.className = 'nrow fim';
+    const lab = document.createElement('span'); lab.className = 'mlab';
+    const bolinha = document.createElement('i');
+    const tk = state.tokens[l.i];
+    bolinha.style.background = CAT[(tk && tk.kind) || ''] || '#5b93ff';
+    lab.append(bolinha, document.createTextNode(visivel(l.texto || l.token)));
+    row.append(lab, celNorma(l.x2, mx, ''), celNorma(l.nfinp, mx, 'puro'),
+               celNorma(l.nfin, mx, 'gam'));
+    row.title = `id ${l.id} · entra ${dec(l.x2)} → puro ${dec(l.nfinp)} → com γ ${dec(l.nfin)}`;
+    row.onclick = () => abrirFichaId(l.id, tk);
+    row.style.cursor = 'pointer';
+    box.appendChild(row);
+  }
+  const g = d.gamma;
+  const escala = Math.max(Math.abs(g.min), Math.abs(g.max), 0.01);
+  pintarFaixa($('#b5gamma'), g.faixa, escala, 30);
+  $('#b5gd').textContent = fmt(d.d);
+  $('#b5gesq').textContent = '−' + dec(escala);
+  $('#b5gesd').textContent = '+' + dec(escala);
+  $('#b5glegenda').textContent = `média ${dec(g.media)} · min ${dec(g.min)} · max ${dec(g.max)} `
+    + `· σ ${dec(g.std)} — é este γ que transforma o RMSNorm puro no vetor final que a tabela lê`;
+}
+
+/* ---- os logits: o vocab inteiro de uma vez, e os dez que importam ---- */
+function barrasLogits(box, lista){
+  box.innerHTML = '';
+  const mx = Math.max(...lista.map(x => Math.abs(x.logit)), 0.01);
+  for (const x of lista){
+    const linha = document.createElement('div'); linha.className = 'vz';
+    const t = document.createElement('div'); t.className = 't';
+    t.textContent = visivel(x.texto || x.token);
+    t.title = `${x.token} · id ${x.id} · logit ${dec(x.logit)} — clique para a ficha`;
+    const barra = document.createElement('div'); barra.className = 'bar';
+    const ench = document.createElement('i');
+    ench.style.width = (Math.abs(x.logit) / mx * 100).toFixed(1) + '%';
+    if (x.logit < 0) ench.style.background = '#ff9f6b';
+    barra.appendChild(ench);
+    const c = document.createElement('div'); c.className = 'c'; c.textContent = dec(x.logit);
+    linha.append(t, barra, c);
+    linha.onclick = () => abrirFichaId(x.id, null);
+    linha.style.cursor = 'pointer';
+    box.appendChild(linha);
+  }
+}
+
+function desenharLogits(d){
+  pintarFaixa($('#logitstrip'), d.faixa, d.escala, 44);
+  $('#b5esq').textContent = '−' + dec(d.escala);
+  $('#b5esd').textContent = '+' + dec(d.escala);
+  const cv = $('#logitstrip');
+  cv.onmousemove = (ev) => {
+    const rect = cv.getBoundingClientRect();
+    const j = Math.max(0, Math.min(d.faixa.length - 1,
+      Math.floor((ev.clientX - rect.left) / rect.width * d.faixa.length)));
+    $('#b5lectura').textContent = `pingo ${j + 1} de ${d.faixa.length}: pico |logit| `
+      + `${dec(d.faixa[j])} num grupo de ${Math.ceil(d.vocab / d.faixa.length)} linhas do vocab`;
+  };
+  cv.onmouseleave = () => { $('#b5lectura').textContent = 'passe o mouse'; };
+  cv.onmouseleave();
+
+  barrasLogits($('#b5top'), d.top);
+  const l = d.tokens[d.i];
+  const g = $('#b5kvs'); g.innerHTML = '';
+  g.append(
+    kv('quem ganhou', `${visivel(d.top[0].texto || d.top[0].token)} · logit ${dec(d.top[0].logit)}`),
+    kv('os logits desta posição', `mín ${dec(d.estat.min)} · máx ${dec(d.estat.max)} `
+      + `· σ ${dec(d.estat.std)}`),
+    kv('o vetor lido pela tabela', `‖x‖ ${dec(l.x2)} → com γ ${dec(l.nfin)}`),
+    kv('maior norma da frase', `entra ‖x‖ ${dec(d.norma.maior_x2)} · lido ${dec(d.norma.maior_nfin)}`));
+
+  let ph;
+  if (d.proximo){
+    ph = `nesta posição o modelo foi perguntado “o que vem depois?” — a frase tem `
+      + `<b>${escH(visivel(d.proximo.texto || d.proximo.token))}</b>: nota `
+      + `<b>${dec(d.proximo.logit)}</b>, posto <b>${fmt(d.proximo.rank)}</b> de ${fmt(d.vocab)}. `
+      + `Não era o favorito? É exatamente aí que a amostragem (⑥) decide se o modelo segue ou não.`;
+  } else {
+    ph = `a posição escolhida é a <b>última da frase</b>: aqui o modelo prediz o <b>primeiro `
+      + `token que vai gerar</b> — a lista acima é exatamente o cardápio do passo ⑥.`;
+  }
+  $('#b5ganota').innerHTML = ph + ' O lm head só dá notas: ninguém escolheu ainda.';
+}
+
+/* ---- a mesma tabela lida duas vezes: vetor inicial (②) × vetor final (⑤) ---- */
+async function desenharLidas(d){
+  const tok = state.tokens[d.i]; if (!tok) return;
+  barrasLogits($('#b5depois'), d.top);
+  const chave = state.modelo + ':' + tok.id;
+  let lida = cacheLida.get(chave);
+  if (!lida){
+    let r;
+    try {
+      r = await fetch(`/api/lab/lida?modelo=${encodeURIComponent(state.modelo)}&id=${tok.id}`);
+    } catch (e){ lida = null; }
+    if (!lida){
+      try { lida = await r.json(); } catch (e){ lida = null; }
+      if (lida && r.ok) cacheLida.set(chave, lida); else lida = null;
+    }
+  }
+  if (!lida){ $('#b5antes').innerHTML = ''; $('#b5comnota').textContent = ''; return; }
+  barrasLida($('#b5antes'), lida.por_pontos, 'pontos');
+  const antes = lida.por_pontos[0], depois = d.top[0];
+  const mesmo = antes.id === depois.id;
+  $('#b5comnota').innerHTML = `o token <b>${escH(visivel(tok.texto || tok.superficie))}</b> `
+    + `começa como o vetor da linha ${tok.id} da tabela — e o vizinho que mais pontua <i>ali</i> `
+    + `é <b>${escH(visivel(antes.texto || antes.token))}</b>; lida a mesma tabela com o vetor `
+    + `<b>depois das ${d.n_camadas} camadas</b>, o campeão é `
+    + `<b>${escH(visivel(depois.texto || depois.token))}</b>${mesmo ? ' — o mesmo, '
+      + 'mas com nota e ordem bem diferentes' : ''}. As camadas não criaram pesos novos: `
+    + `mexeram no <b>vetor</b> que entra na tabela.`;
 }
 
 /* ---------------------------------------------------------------- ficha */

@@ -453,6 +453,59 @@ def test_lab_bloco_e_attn_compartilham_a_captura(ambiente):
     assert servidor._captura is antes
 
 
+# ---------------------------------------------------------------- passo ⑤ · lm head
+
+
+def test_lab_lmhead_norm_final_e_logits_reais(ambiente):
+    cliente, servidor = ambiente
+    ids = [4, 9, 10, 5]
+    r = cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": ids, "i": 1})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["modelo"] == "sft" and d["n_camadas"] == 1
+    assert (d["n"], d["d"], d["vocab"], d["i"]) == (4, 16, len(VOCAB), 1)
+    assert d["raiz_d"] == pytest.approx(16 ** 0.5, abs=0.01)
+    for l in d["tokens"]:                          # a última régua vale para todos os tokens
+        assert l["nfinp"] == pytest.approx(d["raiz_d"], abs=0.1)
+    assert [x["logit"] for x in d["top"]] == sorted((x["logit"] for x in d["top"]), reverse=True)
+    # os logits são os do próprio forward — não uma recomputação a partir da tabela
+    esperado = servidor._captura[1]["logits"][1]
+    assert d["top"][0]["logit"] == pytest.approx(float(esperado.max()), abs=5e-4)
+    assert d["proximo"]["id"] == 10 and d["proximo"]["token"] == "mundo"
+    assert d["proximo"]["rank"] == int((esperado > esperado[10]).sum()) + 1
+    assert servidor._loaded is not None                      # carona do forward do ③
+    assert not servidor.gen_lock.locked()
+    # última posição da frase: sem sucessor — é o cardápio da geração (passo ⑥)
+    assert cliente.post("/api/lab/lmhead",
+                        json={"modelo": "sft", "ids": ids, "i": 3}).get_json()["proximo"] is None
+
+
+def test_lab_lmhead_valida_entradas_e_responde_429(ambiente):
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": []}).status_code == 400
+    assert cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": ["x"]}).status_code == 400
+    r = cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": [4, 9], "i": 5})
+    assert r.status_code == 400 and "fora da frase" in r.get_json()["erro"]
+    servidor.gen_lock.acquire(blocking=False)
+    try:
+        assert cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": [4]}).status_code == 429
+    finally:
+        servidor.gen_lock.release()
+    d = cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": [4] * 700, "i": 0}).get_json()
+    assert d["n"] == 64                                          # mesmo teto de tokens do ③
+
+
+def test_lab_lmhead_e_attn_compartilham_o_mesmo_forward(ambiente):
+    """⑤ também é carona: a captura do ③ já saiu com a norm final e os logits."""
+    cliente, servidor = ambiente
+    assert cliente.post("/api/lab/attn", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                               "camada": 0}).status_code == 200
+    antes = servidor._captura
+    assert cliente.post("/api/lab/lmhead", json={"modelo": "sft", "ids": [4, 9, 10, 5],
+                                                 "i": 2}).status_code == 200
+    assert servidor._captura is antes
+
+
 # ------------------------------------------------------------------ busca de vocab
 
 
@@ -484,6 +537,7 @@ def test_lab_pagina_e_o_link_do_chat(ambiente):
     assert "tokenização" in corpo and "/api/lab/tokenize" in corpo and "em breve" in corpo
     assert "/api/lab/matriz" in corpo and "/api/lab/stats" in corpo and "/api/lab/lida" in corpo
     assert "/api/lab/attn" in corpo and "/api/lab/rope" in corpo and "/api/lab/bloco" in corpo
+    assert "/api/lab/lmhead" in corpo
     pagina_do_chat = cliente.get("/").get_data(as_text=True)
     assert 'href="/lab"' in pagina_do_chat
 

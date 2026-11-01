@@ -292,9 +292,11 @@ def test_capture_nao_muda_os_logits_e_preenche_por_camada(tiny_model):
     assert set(cap[0]) == {"q_lin", "q", "k_lin", "k", "w",          # ③
                            "x0", "n1p", "n1", "a", "x1", "n2p", "n2",  # ④
                            "g", "u", "s", "m", "x2"}
+    assert set(cap[1]) == set(cap[0]) | {"nfinp", "nfin"}           # ⑤ só no último dict
     assert cap[0]["w"].shape == (1, 4, 9, 9)            # [B, H, T, T]
     assert cap[0]["q_lin"].shape == (1, 4, 9, 8)        # head_dim = 32/4 = 8
     assert cap[0]["x0"].shape == (1, 9, 32) and cap[0]["g"].shape == (1, 9, 64)
+    assert cap[1]["nfinp"].shape == (1, 9, 32)
 
 
 def test_capture_pesos_sao_probabilidades_casuais(tiny_model):
@@ -342,6 +344,22 @@ def test_capture_bloco_e_fiel_rmsnorm_e_swinglu(tiny_model):
     assert torch.allclose(c["x2"], c["x1"] + c["m"], atol=1e-6)
     # o fluxo conecta: o que sai do bloco 0 é o que entra no bloco 1
     assert torch.equal(cap[1]["x0"], cap[0]["x2"])
+
+
+def test_capture_norm_final_e_o_lm_head_e_a_mesma_tabela(tiny_model):
+    """⑤: o último dict sai com a norm final, e o lm head é *literalmente* a tabela de
+    embeddings aplicada ao vetor capturado — a aula do lab depende dessa identidade."""
+    torch.manual_seed(7)
+    ids = torch.randint(0, 101, (1, 9))
+    cap = [{} for _ in range(2)]
+    with torch.no_grad():
+        out = tiny_model(ids, capture=cap)
+    d = tiny_model.config.hidden_size
+    fin = cap[1]
+    assert torch.allclose(fin["nfinp"].norm(dim=-1), torch.full((1, 9), d ** 0.5), atol=0.05)
+    assert torch.allclose(fin["nfin"], fin["nfinp"] * tiny_model.norm.weight, atol=1e-6)
+    # o tied lm head visto pela aula: logits == nfin @ embed.weightᵀ, sem recomputação
+    assert torch.allclose(fin["nfin"] @ tiny_model.embed.weight.T, out.logits, atol=1e-5)
 
 
 def test_capture_recusa_cache_padding_e_contagem_errada(tiny_model):
