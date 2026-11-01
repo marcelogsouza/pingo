@@ -190,7 +190,9 @@ No passo ② (medidos hoje na mesma tabela):
   apontam para o mesmo lado** — a média cancela. Bom para desmanchar a ideia de que
   "um token é igual ao outro".
 
-No passo ③ (medidos no checkpoint SFT, forward de 11 tokens na CPU em 0,66 s):
+No passo ③ (medidos no checkpoint SFT; 11 tokens × 12 camadas × 14 cabeças: **0,66 s** na CPU,
+**0,64 s** na GPU incluindo o load, e **0,004 s** para a 2ª camada porque a captura fica em
+cache por `modelo+ids` — os valores batem dígito a dígito entre CPU e GPU, tudo em fp32):
 
 - **a rotação é fiel**: `‖q_lin‖ = ‖q‖ = 8,7258` para `Ġinvestir` (rotação não estica nada), e
   o par 0 na posição 5 calculado no navegador `(0,2747, −0,0189)` bate com o `q` capturado

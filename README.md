@@ -162,8 +162,9 @@ passos ①, ② e ③ estão prontos — **tokenização**, **embedding** e **Ro
 
 Os passos ①–② leem o `model.safetensors` na CPU e funcionam com qualquer coisa ocupando a VRAM.
 O ③ carrega o modelo no device do servidor — respeita o lock do chat (devolve aviso se ele está
-falando) e limita a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual (~0,7 s o
-forward de uma frase curta). Os passos ④–⑦ (RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem
+falando) e limita a frase a 64 tokens; com a VRAM ocupada, `--device cpu` serve igual (0,66 s o
+forward de uma frase curta; na GPU livre são 0,64 s já com o load do modelo). Os passos ④–⑦
+(RMSNorm/SwiGLU, lm head, amostragem, loop) aparecem
 como "em breve" — o `capture` do ③ já entrega boa parte do que eles vão desenhar.
 Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 

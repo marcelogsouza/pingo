@@ -48,7 +48,7 @@ verdes**.
 
 1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
-2. `uv run pytest -q` → **140 verdes** (CPU, ~14 s).
+2. `uv run pytest -q` → **156 verdes** (CPU, ~14 s).
 3. `uv run python scripts/webui.py` e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
    imprime): se o chat responder, o modelo e a GPU estão de pé; `/lab` responde mesmo com a
    GPU ocupada. (A porta 8000 desta máquina é de outra aplicação; o host padrão é `0.0.0.0`,
@@ -72,7 +72,8 @@ verdes**.
   `Server.carregar()`. A exceção deliberada é o passo ③ (`/api/lab/attn|rope` →
   `Server.captura_atencao()`): carrega o modelo no device do servidor sob `gen_lock` (429 se o
   chat gera) e teto de 64 tokens — com o professor de pé, rode o servidor em `--device cpu`
-  (0,7 s o forward de 11 tokens); nunca derrube o professor por conta própria.
+  (0,66 s o forward de 11 tokens; na GPU livre, 0,64 s já com o load, e a 2ª chamada em
+  0,004 s porque a captura fica em cache); nunca derrube o professor por conta própria.
 - **Um escritor por saída.** Dois `gen_sft.py` no mesmo JSONL corrompem o arquivo; dois
   `train_sft.py` no mesmo `--out` idem. A WebUI também ocupa GPU: rode uma geração por vez.
 

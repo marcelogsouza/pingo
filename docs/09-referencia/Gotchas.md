@@ -270,8 +270,9 @@ histograma e para o mapa de atenção do passo ③.
 `/api/lab/*` usam `tokenizador_de()` e `tabela_de()`, que ficam na CPU. A exceção deliberada é
 `/api/lab/attn|rope` → `Server.captura_atencao()`: carrega o modelo no device do servidor sob
 `gen_lock` (429 se o chat está gerando), teto de 64 tokens e cache de uma captura. Com o
-professor servindo, rode o servidor em `--device cpu` — o forward de 11 tokens leva 0,7 s.
-Nunca derrube o professor por conta própria.
+professor servindo, rode o servidor em `--device cpu` — o forward de 11 tokens leva 0,66 s (na
+GPU livre são 0,64 s já incluindo o load; a captura fica em cache por `modelo+ids`, então
+trocar só camada/cabeça custa microssegundos). Nunca derrube o professor por conta própria.
 
 **O RoPE do Pingo não gira pares vizinhos de coordenadas.** Com `rotate_half` (estilo HF), o
 par que roda junto é **(xⱼ, xⱼ₊₃₂)** — 32 dimensões adiante, não (x₂ᵢ, x₂ᵢ₊₁). Um relógio que
