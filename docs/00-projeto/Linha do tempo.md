@@ -65,6 +65,19 @@ horas de parede, sendo ~7,6 h de treino de GPU e ~12 h de geração do dataset n
 | 00:09 | — | **SFT v2** (1 época, lr 5e-5): 828 steps em 4min52s, val 1,76, fator **1,91×** |
 | 00:11 | — | avaliação: formato 100%, F1 0,375, fidelidade 0,59 ([[Run do SFT-120M]]) |
 | 00:40 | `670b906` | **WebUI em Flask**: chat com streaming SSE, SFT + base, contexto opcional ([[WebUI]]) |
+| 06:40 | `c4389c7` | WebUI ouve em `0.0.0.0` (LAN) por padrão e avisa que não há autenticação |
+
+## 2026-11-01: o Pingo vira aula
+
+| Hora | Commit | O que aconteceu |
+|---|---|---|
+| — | — | **Modo didático** em `/lab`: tokenização colorida (id, superfície byte-level, bytes), ficha do token com a faixa dos 896 números e os vizinhos por cosseno, busca no vocab ([[Modo didático]]) |
+| — | — | A tabela de embeddings passa a ser lida **direto do `model.safetensors` na CPU** (58 MB) — o lab roda sem encostar na VRAM do professor |
+| — | — | Suíte: **140 casos** (`pingo/didatic.py` novo, +13; WebUI 22) |
+
+O passo 1 de uma esteira de sete (tokenização → embedding → RoPE/atenção → MLP → lm head →
+amostragem → loop). O objetivo deixou de ser só "ter um modelo": passou a ser **mostrar o
+modelo por dentro**, que é o que o projeto sempre prometeu ser ([[Visão e filosofia]]).
 
 ## Como o dia 2 terminou
 
@@ -87,11 +100,15 @@ flowchart LR
     subgraph "2026-10-31 madrugada"
         sft5["SFT treinado<br/>(1 época)"] --> wui["WebUI"]
     end
+    subgraph "2026-11-01"
+        lab["modo didático<br/>(/lab · passo 1)"]
+    end
     p6a --> p6b --> p7
+    wui --> lab
 
     classDef feito fill:#c7f9cc,stroke:#2f9e44,color:#000
     classDef rodando fill:#fff3bf,stroke:#f08c00,color:#000
-    class p1,p2,p3,p4,p5,p6a,p6b,p7,sft1,sft2,sft3,sft4,ds,sft5,wui feito
+    class p1,p2,p3,p4,p5,p6a,p6b,p7,sft1,sft2,sft3,sft4,ds,sft5,wui,lab feito
 ```
 
 ## Lições de processo que o `git log` mostra

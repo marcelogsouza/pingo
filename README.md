@@ -101,8 +101,10 @@ O plano detalhado, com decisões e critérios de aceite por etapa, está em [`PL
 ```
 pingo/
 ├── PLAN.md
-├── pingo/        # pacote: config, modelo, cache, geração, dados
-├── scripts/      # download, tokenizer, tokens, treino, amostragem
+├── pingo/        # pacote: config, modelo, cache, geração, dados, didática
+├── scripts/      # download, tokenizer, tokens, treino, amostragem, webui
+├── web/          # página do modo didático (/lab)
+├── docs/         # vault Obsidian: como cada coisa foi feita e por quê
 ├── tests/        # shapes, equivalência do KV cache, overfit
 ├── data/         # (gitignored) parquet + shards .bin
 └── tokenizer/    # (gitignored) BPE treinado
@@ -130,11 +132,28 @@ uv run python scripts/webui.py --host 127.0.0.1   # só esta máquina
 O host padrão é `0.0.0.0`, então dá para abrir de outra máquina da rede local; **não há
 autenticação** — mantenha na LAN.
 
-Uma página de chat em Flask que serve o **SFT** (`runs/sft-120m/final`) e o **base**
+Uma página de chat em Flask que serve o **SFT** (`runs/sft-120m-ep1/final`) e o **base**
 (`runs/pt-120m/final`): streaming token a token, contexto opcional (mini-RAG) e os
 hiperparâmetros de amostragem. O prompt é exatamente o do treino
 (`<|user|>Pergunta: …<|assistant|>`), então o que você vê na tela é o modelo no seu melhor
 formato. Detalhes em [`docs/07-sft/WebUI.md`](docs/07-sft/WebUI.md).
+
+### Modo didático — `/lab`
+
+A segunda página da mesma UI, para o **curso**: o modelo por dentro, etapa por etapa. O
+passo 1 está pronto — **tokenização**:
+
+- o prompt vira **chips coloridos** (especial, início de palavra, continuação, pontuação,
+  número, byte puro), cada um com o **id** da tabela embaixo;
+- clicando, abre a **ficha do token**: o texto humano ⇄ a superfície byte-level (`ĠpreÃ§o`),
+  os bytes em hex, a norma, a faixa de calor dos **896 números** do embedding inicial e os
+  **vizinhos por cosseno** — `Ġinvestir` mora ao lado de `Ġapostar`, `Ġgastar`, `Ġcomprar`;
+- busca no vocab (`4560`, `ção` ou `Ã§Ã£o`) e o medidor `caracteres → tokens · chars/token`.
+
+Nada do `/lab` usa a GPU: a tabela de embeddings é lida do `model.safetensors` na CPU, então
+o laboratório funciona mesmo com outro trabalho na VRAM. Os passos 2–7 da esteira (embedding,
+RoPE/atenção, MLP, lm head, amostragem, loop) aparecem desabilitados — é o próximo trabalho.
+Detalhes em [`docs/07-sft/Modo didático.md`](docs/07-sft/Modo didático.md).
 
 ## Aviso
 

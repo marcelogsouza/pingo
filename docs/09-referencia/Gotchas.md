@@ -1,6 +1,6 @@
 ---
 tags: [pingo, referencia, gotchas, bugs]
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # Gotchas
@@ -229,6 +229,34 @@ NaN só propaga o NaN).
 
 **Se der OOM:** baixar `B` e subir `accum` na mesma proporção (batch global igual → curva
 idêntica).
+
+## WebUI e modo didático
+
+**`decode([id])` não devolve o texto de um token.** Num BPE byte-level o token pode ser
+metade de um caractere UTF-8, e o `decode` devolve `U+FFFD`. O texto humano vem dos
+**`offsets` do `encode()`, que são posições de caractere** do texto original (não de byte) —
+`tokenizar()` fatia por eles. → [[Modo didático]]
+
+**A superfície do token não é o texto.** O vocab guarda `ĠpreÃ§o`; o humano lê ` preço`. A
+ponte é o alfabeto byte-level (`pingo.didatic.bytes_para_superficie` /
+`superficie_para_bytes`), não um `encode("utf-8")` da superfície.
+
+**O `pre_tokenizers.Whitespace()` do fixture estilhaça `<|user|>`.** Ele separa palavras e
+pontuação (`<|`, `user`, `|>`), então nenhum token de chat sai de um WordLevel de mentira e o
+teste vira verde por acidente. Nos testes do lab use
+`pre_tokenizers.Split(pattern=Regex(r"\s+"), behavior="removed")`.
+
+**O checkpoint base não tem `tokenizer.json`.** `Server.arquivo_tokenizador()` cai em
+`tokenizer/tokenizer.json` (16.384); o SFT traz o dele (16.387). Tokenizar com um e desenhar
+a ficha com a tabela do outro mostra o vetor errado **sem erro nenhum** — por isso
+`Server.tabela_de()` confere `embed.weight × get_vocab_size()`.
+
+**O `save_pretrained` do HF v5 grava só `embed.weight`.** O `lm_head` é *tied*, não duplicado:
+a tabela que o laboratório desenha é essa chave do `model.safetensors` (58 MB em fp32).
+
+**O modo didático não pode chamar `Server.carregar()`.** `carregar()` sobe o modelo para a
+VRAM — exatamente o que a regra do professor proíbe. As rotas `/api/lab/*` usam
+`tokenizador_de()` e `tabela_de()`, que ficam na CPU.
 
 ## Ver também
 

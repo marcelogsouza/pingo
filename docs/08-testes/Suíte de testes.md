@@ -1,16 +1,16 @@
 ---
 tags: [pingo, testes, qualidade]
 etapa: 0
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # Suíte de testes
 
 ```bash
-uv run pytest -q      # 119 passed in ~13 s (medido em 2026-10-30)
+uv run pytest -q      # 140 passed in ~14 s (medido em 2026-11-01)
 ```
 
-**119 casos coletados de 111 funções de teste** em 11 arquivos. Tudo roda em **CPU** (config
+**140 casos coletados de 132 funções de teste** em 12 arquivos. Tudo roda em **CPU** (config
 tiny, tempo curto) — a GPU não é necessária para validar o código, só para treinar.
 
 ## Por arquivo
@@ -27,7 +27,8 @@ tiny, tempo curto) — a GPU não é necessária para validar o código, só par
 | `test_validate_sft.py` | 24 | evidência tolerante a whitespace, `is_pt` curto, contrato do exemplo, shingles/Jaccard, **LSH acha quase-duplicata**, LSH barra trecho republicado, **não indexa rejeitados**, split determinístico por doc, ponta a ponta, idempotência dos tokens de chat, `render`, juiz fake |
 | `test_train_sft.py` | 9 | **collate desloca labels** e mascara prompt/pad, loss ignora prompt/padding, padding não contamina posições reais, **resize na média + re-tie**, tokens de chat estáveis, descarte por tamanho, ckpt/best/final/log, **resume bit-exato**, dataset vazio avisa |
 | `test_eval_sft.py` | 12 | F1 extremos/caixa, `apoio` com stem, limpeza de tokens de chat, recusa por modo, `terminou`, agregação sem contaminar com `None`, lista vazia, resolve tokenizer do modelo, ponta a ponta com modelo tiny |
-| `test_webui.py` | 14 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior |
+| `test_webui.py` | 22 | prompt igual ao do treino (**o teste que impede a UI de degradar o modelo**), protocolo SSE `meta`/`delta`/`done`, `429` da segunda geração, `400` de prompt grande, clamp dos parâmetros, `DeltaDecoder` incremental, troca de modelo que descarrega o anterior |
+| `test_didatic.py` | 13 | **alfabeto byte-level** (`ĠatÃ©` são os bytes de ` até`), categoria dos tokens, fatia pelos `offsets`, repetições e acentos, corte em 512, `embed.weight` lido do `.safetensors` na CPU, norma e vizinhos por cosseno ordenados, busca no vocab, integração com o tokenizer real (pula sem `runs/`) |
 
 ## Os cinco testes que valem por uma tarde de debugging
 

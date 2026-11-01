@@ -1,7 +1,7 @@
 ---
 tags: [pingo, indice, moc]
 tipo: mapa-de-conteudo
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # 🐦 Pingo — o vault
@@ -122,10 +122,11 @@ flowchart LR
 - [[Run do SFT-120M]] — os três runs, a curva do overfit e por que o v2 (1 época) é o que vale
 - [[Avaliação SFT]] — formato, F1, fidelidade, esquecimento catastrófico
 - [[WebUI]] — a tela de chat (Flask + SSE) para testar o modelo com o prompt do treino
+- [[Modo didático]] — o `/lab`: tokenização colorida, ids, bytes e o vetor inicial (passo 1 do curso)
 - [[Professores remotos (OpenRouter)]] — a comparação medida de 3 modelos, com preços
 
 ### 08 — Qualidade
-- [[Suíte de testes]] — 119 testes, e o que cada um protege
+- [[Suíte de testes]] — 140 testes, e o que cada um protege
 
 ### 09 — Referência
 - [[Glossário]] — todo jargão que aparece no vault
@@ -134,7 +135,7 @@ flowchart LR
 
 ---
 
-## Estado do projeto (2026-10-31)
+## Estado do projeto (2026-11-01)
 
 ```mermaid
 flowchart LR
@@ -143,6 +144,7 @@ flowchart LR
     s7 --> s1g["SFT-1 gerador"]
     s1g --> s2v["SFT-2 validador"] --> s3t["SFT-3 treino"] --> s4e["SFT-4 avaliação"]
     s4e --> ui["WebUI + SFT-5<br/>opcional"]
+    ui --> lab["modo didático<br/>/lab · passos 2-7"]
     s4e -.-> s8["8 · escalar p/ 350M<br/>suspenso"]
     style s1 fill:#c7f9cc,stroke:#2f9e44
     style s2 fill:#c7f9cc,stroke:#2f9e44
@@ -156,6 +158,7 @@ flowchart LR
     style s3t fill:#c7f9cc,stroke:#2f9e44
     style s4e fill:#c7f9cc,stroke:#2f9e44
     style ui fill:#d0ebff,stroke:#1971c2
+    style lab fill:#d0ebff,stroke:#1971c2
     style s8 fill:#ffe3e3,stroke:#c92a2a,stroke-dasharray: 5 5
 ```
 
@@ -168,8 +171,10 @@ flowchart LR
   épocas ia a 6,94×). Números e amostras em [[Run do SFT-120M]].
 - ✅ **WebUI** em Flask para conversar com o modelo (`uv run python scripts/webui.py`, porta
   8010) — [[WebUI]].
+- ✅ **Modo didático** em `/lab` — passo 1 (tokenização + embeddings iniciais) de uma esteira
+  de sete etapas para o curso; nada nele usa GPU — [[Modo didático]].
 - ⬜ Próximo: SFT-5 (instruções gerais/mistura de texto cru, para baixar o esquecimento e
-  ensinar recusa) e Passo 8 (**350M — suspenso**).
+  ensinar recusa), passos 2–7 do modo didático e Passo 8 (**350M — suspenso**).
 
 > [!warning] Regra de ouro do repositório — os dois são vivos
 > **`AGENTS.md` é o estado vivo e curto** (handoff entre sessões: onde estamos, o que fazer

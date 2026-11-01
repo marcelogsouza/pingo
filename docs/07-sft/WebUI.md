@@ -1,7 +1,7 @@
 ---
 tags: [pingo, sft, ferramenta, flask]
 etapa: 0
-atualizado: 2026-10-30
+atualizado: 2026-11-01
 ---
 
 # WebUI (Flask)
@@ -88,16 +88,24 @@ vez de brigar por memória.
 - 120M erra fato com naturalidade ("São Paulo, no estado do Rio de Janeiro") e responde
   curto. A WebUI existe para **ver** isso, não para esconder.
 
-## Testes (13 casos, `tests/test_webui.py`)
+## Testes (22 casos, `tests/test_webui.py`)
 
 Sem rede e sem o tokenizer real: um checkpoint tiny + um tokenizer WordLevel de mentira. O
 que está travado: o **formato do prompt**, o **protocolo SSE** (`meta`/`delta`/`done`), o
 `429` da segunda geração, o `400` de prompt grande, o clamp dos parâmetros, o `DeltaDecoder`
-incremental e a troca de modelo que descarrega o anterior.
+incremental, a troca de modelo que descarrega o anterior e as rotas do laboratório.
+
+## O modo didático (`/lab`)
+
+A segunda página do mesmo servidor: **tokenização colorida, ids, bytes e o vetor inicial de
+cada token** — o passo 1 de uma esteira de etapas para o curso. Ela não usa GPU nem o lock de
+geração (lê `embed.weight` do `.safetensors` na CPU), então dá para abrir o laboratório
+enquanto o chat gera uma resposta. Nota completa: [[Modo didático]].
 
 ## Ver também
 
 - [[Treino SFT]] — o formato do prompt que a UI reproduz
 - [[Geração (sampling)]] — os parâmetros que os sliders mexem
 - [[Avaliação SFT]] — o mesmo modelo, medido com números
+- [[Modo didático]] — a outra página do mesmo servidor: o modelo por dentro
 - [[Pingo]] — voltar ao índice
