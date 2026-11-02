@@ -155,7 +155,9 @@
       <h2>Contrato do dataset</h2>
       <p class="hint">JSONL: uma linha = um objeto JSON com <code>content</code> string não-vazia.
         Todo ingest (Wikipedia, CSV, HF) termina aqui. A QA usa as <b>mesmas réguas</b> do
-        <code>process_data.py</code> (300+ chars, linhas curtas, símbolos, hash blake2b de duplicata).</p>
+        <code>process_data.py</code> (300+ chars, linhas curtas, símbolos, hash blake2b de duplicata).
+        É o contrato do <b>pré-treino</b> — dataset de SFT (com <code>pergunta/resposta</code>) é
+        reprovado aqui de propósito; ele entra direto na aba Treino.</p>
       <div class="row">
         <select id="ds-list" style="flex:1;min-width:260px"></select>
         <input type="text" id="ds-path" placeholder="ou caminho no repo: data/wiki/pt.jsonl" style="flex:1;min-width:260px">
