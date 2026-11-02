@@ -1,0 +1,596 @@
+<!doctype html>
+<!-- Interface de treino do Pingo (/treino, treino-4): dataset (QA), tokenização, treino
+     (pré-treino + SFT) e runs com curva de loss e monitor de hardware. Servida por
+     scripts/webui.py; quem executa é o JobRunner (pingo/jobs.py) — esta página só monta
+     o argv e assiste (polling de 2 s em /api/treino/status|hw|log). -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pingo — treino · dataset → tokens → modelo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏋️</text></svg>">
+<style>
+  :root{
+    --bg:#0a0c10; --bg2:#0e1117; --panel:#12161d; --panel2:#161b24; --line:#1f2632; --line2:#2a3342;
+    --text:#e7ebf2; --muted:#8d98aa; --dim:#5f6b7d;
+    --accent:#3b7bfb; --accent2:#5b93ff; --accent-dim:#1b2b4d;
+    --green:#3ddc84; --yellow:#ffd166; --red:#ff6b6b; --violet:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  body::before{content:"";position:fixed;inset:-20% 0 auto 0;height:560px;pointer-events:none;
+    background:radial-gradient(60% 100% at 50% 0%,rgba(59,123,251,.16),transparent 70%)}
+  .wrap{position:relative;max-width:1080px;margin:0 auto;padding:0 20px 140px}
+  header{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:12px;padding:14px 0;
+    background:linear-gradient(var(--bg) 65%,transparent);backdrop-filter:blur(6px)}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0}
+  .brand svg{width:30px;height:30px;flex:none;filter:drop-shadow(0 2px 8px rgba(59,123,251,.45))}
+  .brand b{font-size:17px}
+  .brand i{color:var(--dim);font-size:12.5px;font-style:normal;white-space:nowrap}
+  .spacer{flex:1}
+  .link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--muted);
+    font-size:12.5px;border:1px solid var(--line);background:var(--panel);padding:8px 12px;
+    border-radius:10px;transition:.15s;white-space:nowrap}
+  .link:hover{color:var(--text);border-color:var(--line2);transform:translateY(-1px)}
+  /* barra de estado do job + hardware */
+  #bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;padding:10px 14px;margin-bottom:14px;
+    font:12.5px var(--mono);color:var(--muted)}
+  #bar .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
+  #bar .dot.rodando{background:var(--green);box-shadow:0 0 8px var(--green)}
+  #bar .dot.parando{background:var(--yellow)}
+  #bar .dot.interrompido{background:var(--yellow)}
+  #bar .dot.concluido{background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+  #bar .dot.falhou{background:var(--red);box-shadow:0 0 8px var(--red)}
+  #bar b{color:var(--text)}
+  #bar .hw{margin-left:auto;display:flex;gap:12px;flex-wrap:wrap}
+  #bar .hw em{font-style:normal;color:var(--accent2)}
+  .gauge{display:inline-block;width:52px;height:6px;border-radius:3px;background:var(--panel2);
+    border:1px solid var(--line);vertical-align:middle;overflow:hidden;margin-left:5px}
+  .gauge i{display:block;height:100%;background:var(--accent2)}
+  .gauge i.quase{background:var(--yellow)} .gauge i.cheio{background:var(--red)}
+  /* abas */
+  .tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 0 14px;scrollbar-width:thin}
+  .tab{padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:var(--panel);
+    color:var(--dim);font-size:13px;cursor:pointer;transition:.15s;white-space:nowrap}
+  .tab:hover{color:var(--text)}
+  .tab.on{color:var(--text);border-color:#2b4d8f;background:linear-gradient(180deg,#18294b,#141d31);
+    box-shadow:0 6px 20px rgba(59,123,251,.13)}
+  section{display:none} section.on{display:block}
+  /* cartões e formulários */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px;
+    margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:15px;font-weight:600}
+  .card p.hint{margin:0 0 12px;color:var(--muted);font-size:13px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);min-width:0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:10px}
+  input[type=text],input[type=number],select,textarea{
+    border:1px solid var(--line2);background:var(--bg2);color:var(--text);border-radius:9px;
+    padding:8px 10px;font:13.5px var(--mono);outline:none;width:100%}
+  input:focus,select:focus,textarea:focus{border-color:#33507f;box-shadow:0 0 0 3px rgba(59,123,251,.12)}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-top:12px}
+  .btn{border:1px solid var(--line2);background:var(--panel2);color:var(--text);font:inherit;
+    font-size:13.5px;padding:9px 16px;border-radius:10px;cursor:pointer;transition:.15s}
+  .btn:hover{border-color:#33507f;transform:translateY(-1px)}
+  .btn.go{background:linear-gradient(180deg,#2563eb,#1e4fc0);border-color:#2f5fb8;color:#fff}
+  .btn.stop{border-color:#7a3b3b;color:#ffb4b4}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  code{font:12.5px var(--mono);color:var(--muted);background:var(--bg2);padding:1px 5px;
+    border-radius:5px;border:1px solid var(--line)}
+  /* QA */
+  .verdict{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:6px 14px;
+    font-size:13px;border:1px solid var(--line);margin-left:8px}
+  .verdict.ok{color:var(--green);border-color:#2c5c40;background:rgba(61,220,132,.08)}
+  .verdict.no{color:var(--red);border-color:#6b3535;background:rgba(255,107,107,.08)}
+  .stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font:12.5px var(--mono);color:var(--muted)}
+  .stats b{color:var(--text);display:block;font-size:15px}
+  .linha-problema{border-left:2px solid var(--red)} .linha-aviso{border-left:2px solid var(--yellow)}
+  .linha-info{border-left:2px solid var(--accent2)}
+  .aviso{display:flex;gap:9px;align-items:flex-start;background:var(--bg2);border:1px solid var(--line);
+    border-radius:9px;padding:9px 12px;font-size:13px;color:var(--muted);margin-top:7px}
+  .aviso b{color:var(--text)}
+  table{width:100%;border-collapse:collapse;font:12.5px var(--mono);margin-top:10px}
+  th{color:var(--dim);text-align:left;font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px;border-bottom:1px solid var(--line);color:var(--muted)}
+  tr.click{cursor:pointer} tr:hover td{color:var(--text);background:var(--bg2)}
+  td b{color:var(--text)}
+  .tag{font-size:10.5px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--dim)}
+  .tag.lock{color:var(--yellow);border-color:#6b5a2a}
+  /* log ao vivo + curva */
+  #log{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:11px 13px;
+    font:12px/1.5 var(--mono);color:var(--muted);height:260px;overflow-y:auto;white-space:pre-wrap;
+    margin-top:10px}
+  #curva{width:100%;height:220px;display:block;margin-top:10px}
+  .erro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;
+    background:#2a1518;border:1px solid #6b3535;color:#ffb4b4;border-radius:12px;padding:11px 18px;
+    font-size:13.5px;max-width:80vw;display:none}
+  .ok-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;
+    background:#12281c;border:1px solid #2c5c40;color:#b7f0cc;border-radius:12px;padding:11px 18px;
+    font-size:13.5px;max-width:80vw;display:none}
+  @media (max-width:640px){.brand i{display:none} #bar .hw{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#5b93ff"/><stop offset="1" stop-color="#1f4bb8"/>
+        </linearGradient></defs>
+        <path d="M16 3C11 10 6 14.2 6 20a10 10 0 0 0 20 0c0-5.8-5-10-10-17z" fill="url(#g)"/>
+        <ellipse cx="12.6" cy="20.4" rx="2" ry="2.6" fill="#0a0c10" opacity=".82"/>
+        <ellipse cx="19.4" cy="20.4" rx="2" ry="2.6" fill="#0a0c10" opacity=".82"/>
+        <circle cx="13.3" cy="19.5" r=".7" fill="#fff"/><circle cx="20.1" cy="19.5" r=".7" fill="#fff"/>
+      </svg>
+      <div><b>Pingo · treino</b> <i>dataset → tokens → modelo</i></div>
+    </div>
+    <div class="spacer"></div>
+    <a class="link" href="/">💬 chat</a>
+    <a class="link" href="/lab">🔬 laboratório</a>
+    <button class="link" id="reload" title="Recarregar datasets, tokenizadores, tokens e runs">↻ atualizar</button>
+  </header>
+
+  <div id="bar">
+    <span><span class="dot" id="dot"></span> <b id="jobnome">fila livre</b></span>
+    <span id="jobdet"></span>
+    <button class="btn stop" id="parar" style="display:none">⏹ parar</button>
+    <span class="hw" id="hw"></span>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab on" data-s="dataset">① dataset (QA)</button>
+    <button class="tab" data-s="token">② tokenização</button>
+    <button class="tab" data-s="treino">③ treino</button>
+    <button class="tab" data-s="runs">④ runs &amp; monitor</button>
+  </nav>
+
+  <!-- ① dataset -->
+  <section id="s-dataset" class="on">
+    <div class="card">
+      <h2>Contrato do dataset</h2>
+      <p class="hint">JSONL: uma linha = um objeto JSON com <code>content</code> string não-vazia.
+        Todo ingest (Wikipedia, CSV, HF) termina aqui. A QA usa as <b>mesmas réguas</b> do
+        <code>process_data.py</code> (300+ chars, linhas curtas, símbolos, hash blake2b de duplicata).</p>
+      <div class="row">
+        <select id="ds-list" style="flex:1;min-width:260px"></select>
+        <input type="text" id="ds-path" placeholder="ou caminho no repo: data/wiki/pt.jsonl" style="flex:1;min-width:260px">
+        <button class="btn" id="ds-qa">analisar</button>
+      </div>
+      <div class="row" style="margin-top:6px;color:var(--dim);font-size:12px">
+        <span id="ds-info"></span>
+      </div>
+      <div id="qa-out"></div>
+    </div>
+  </section>
+
+  <!-- ② tokenização -->
+  <section id="s-token">
+    <div class="card">
+      <h2>Vocabulários existentes</h2>
+      <p class="hint"><code>tokenizer/</code> (default) tem 16.384 e é <b>congelado</b> — re-treinar
+        invalidaria os <code>data/tokens/*.bin</code> antigos. Um vocabulário novo vira
+        <code>tokenizer/&lt;id&gt;/</code> e os tokens novos vão para <code>data/tokens/&lt;nome&gt;/</code>.</p>
+      <table id="tok-list"><thead><tr><th>id</th><th>vocab</th><th>chars/token</th><th>especiais</th><th>corpus</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Treinar vocabulário novo <span style="color:var(--dim);font-weight:400">(opcional)</span></h2>
+      <p class="hint">BPE byte-level sobre uma amostra do dataset aprovado. Os tokens especiais
+        <code>&lt;|bos|&gt; &lt;|eos|&gt; &lt;|pad|&gt;</code> são obrigatórios;
+        <code>&lt;|user|&gt; &lt;|assistant|&gt; &lt;|end|&gt;</code> podem nascer já embutidos.</p>
+      <div class="grid">
+        <label class="f">id do vocabulário<input type="text" id="tk-id" placeholder="wiki-16k"></label>
+        <label class="f">vocab<input type="number" id="tk-vocab" value="16384" min="512" max="256000" step="1"></label>
+        <label class="f">amostra (chars)<input type="number" id="tk-sample" value="1000000000" min="10000"></label>
+        <label class="f">min-frequência<input type="number" id="tk-minf" value="2" min="1" max="100"></label>
+        <label class="f" style="grid-column:1/-1">especiais (vírgula)
+          <input type="text" id="tk-specials" value="<|bos|>,<|eos|>,<|pad|>,<|user|>,<|assistant|>,<|end|>"></label>
+        <label class="f" style="grid-column:1/-1">corpus jsonl (vazio = parquets OSCAR)
+          <input type="text" id="tk-jsonl" placeholder="data/wiki/pt.jsonl"></label>
+      </div>
+      <div class="row"><button class="btn go" id="tk-run">🏷️ treinar tokenizer</button>
+        <span style="color:var(--dim);font-size:12px">escreve em tokenizer/&lt;id&gt;/ — nunca sobrescreve</span></div>
+    </div>
+    <div class="card">
+      <h2>Binarizar dataset → tokens</h2>
+      <p class="hint">Aplica o vocabulário escolhido ao JSONL e produz os shards <code>.bin</code>
+        uint16 + <code>meta.json</code> (amarrado ao tokenizer — o <code>train.py</code> deriva o
+        vocab dele, nunca digita à mão). O split val/train é o mesmo hash do <code>process_data.py</code>.</p>
+      <div class="grid">
+        <label class="f">tokenizer
+          <select id="pn-tok"></select></label>
+        <label class="f">dataset jsonl
+          <select id="pn-ds"></select></label>
+        <label class="f">nome da saída<input type="text" id="pn-out" placeholder="wiki-16k"></label>
+        <label class="f">val (%)<input type="number" id="pn-valpct" value="2" min="0" max="50"></label>
+        <label class="f">teto de tokens de train (0 = tudo)<input type="number" id="pn-max" value="0" min="0"></label>
+      </div>
+      <div class="row"><button class="btn go" id="pn-run">🧮 tokenizar dataset</button>
+        <span id="pn-info" style="color:var(--dim);font-size:12px"></span></div>
+    </div>
+  </section>
+
+  <!-- ③ treino -->
+  <section id="s-treino">
+    <div class="card">
+      <h2>Pré-treino</h2>
+      <p class="hint">O mesmo <code>scripts/train.py</code> da CLI. A época é contada sobre os
+        tokens do <code>meta.json</code> do diretório de tokens escolhido.</p>
+      <div class="grid">
+        <label class="f">tokens
+          <select id="pt-tokens"></select></label>
+        <label class="f">nome do run<input type="text" id="pt-out" placeholder="pt-wiki"></label>
+        <label class="f">épocas<input type="number" id="pt-epochs" value="1" min="0.01" step="0.25"></label>
+        <label class="f">ctx<input type="number" id="pt-ctx" value="2048" min="32" max="8192"></label>
+        <label class="f">batch (micro)<input type="number" id="pt-bs" value="16" min="1" max="512"></label>
+        <label class="f">accum<input type="number" id="pt-accum" value="16" min="1" max="128"></label>
+        <label class="f">lr<p></p><input type="text" id="pt-lr" value="3e-4"></label>
+        <label class="f">min-lr<input type="text" id="pt-minlr" value="3e-5"></label>
+        <label class="f">warmup steps<input type="number" id="pt-warmup" value="400" min="0"></label>
+        <label class="f">device
+          <select id="pt-dev"><option value="cuda">cuda</option><option value="cpu">cpu</option></select></label>
+      </div>
+      <label class="chk"><input type="checkbox" id="pt-retomar"> retomar do checkpoint (se o run existir)
+        <input type="checkbox" id="pt-tiny"> tiny (dry-run CPU)</label>
+      <div class="row"><button class="btn go" id="pt-run">▶ iniciar pré-treino</button>
+        <span id="pt-info" style="color:var(--dim);font-size:12px"></span></div>
+    </div>
+    <div class="card">
+      <h2>SFT</h2>
+      <p class="hint">O mesmo <code>scripts/train_sft.py</code>: parte do base escolhido, cresce o
+        embedding se faltar token de chat e faz loss só na resposta. Os padrões são o run recomendado
+        (1 época, lr 5e-5).</p>
+      <div class="grid">
+        <label class="f">base (run/final)
+          <select id="sf-base"></select></label>
+        <label class="f">tokenizer
+          <select id="sf-tok"></select></label>
+        <label class="f">data_dir<input type="text" id="sf-data" value="data/sft/final"></label>
+        <label class="f">nome do run<input type="text" id="sf-out" placeholder="sft-wiki"></label>
+        <label class="f">épocas<input type="number" id="sf-epochs" value="1" min="0.01" step="0.25"></label>
+        <label class="f">max-len<input type="number" id="sf-maxlen" value="1024" min="64" max="4096"></label>
+        <label class="f">batch<input type="number" id="sf-bs" value="8" min="1" max="512"></label>
+        <label class="f">accum<input type="number" id="sf-accum" value="4" min="1" max="128"></label>
+        <label class="f">lr<input type="text" id="sf-lr" value="5e-5"></label>
+        <label class="f">min-lr<input type="text" id="sf-minlr" value="5e-6"></label>
+        <label class="f">warmup steps<input type="number" id="sf-warmup" value="40" min="0"></label>
+        <label class="f">device
+          <select id="sf-dev"><option value="cuda">cuda</option><option value="cpu">cpu</option></select></label>
+      </div>
+      <label class="chk"><input type="checkbox" id="sf-retomar"> retomar do checkpoint (se o run existir)
+        <input type="checkbox" id="sf-tiny"> tiny (dry-run CPU)</label>
+      <div class="row"><button class="btn go" id="sf-run">▶ iniciar SFT</button></div>
+    </div>
+    <div class="card">
+      <h2>Job em andamento</h2>
+      <p class="hint">O "parar" manda SIGTERM: o script fecha o step, grava o checkpoint e sai limpo —
+        aí você marca "retomar" e continua exatamente dali.</p>
+      <svg id="curva" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+      <div id="log">—</div>
+    </div>
+  </section>
+
+  <!-- ④ runs -->
+  <section id="s-runs">
+    <div class="card">
+      <h2>Histórico de runs</h2>
+      <p class="hint">Clique numa linha para ver a curva de loss do run.
+        <code>pt-120m</code> e o backup são <b>protegidos</b>: a interface nunca escreve neles.</p>
+      <table id="runs-list"><thead><tr><th>run</th><th>steps</th><th>val loss</th><th>final</th><th>ckpt</th><th>log</th><th>modificado</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card" id="card-curva" style="display:none">
+      <h2>Curva — <span id="curva-nome"></span></h2>
+      <svg id="curva2" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+    </div>
+  </section>
+</div>
+<div class="erro-toast" id="toast"></div>
+<script>
+// ------------------------------------------------------------------ base
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok) { const e = new Error(j.erro || r.statusText); e.status = r.status; e.body = j; throw e; }
+  return j;
+}
+const post = (p, body) => api(p, {method: "POST", headers: {"Content-Type": "application/json"},
+                                  body: JSON.stringify(body || {})});
+function toast(msg, ok) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.style.background = ok ? "#12281c" : "#2a1518";
+  t.style.borderColor = ok ? "#2c5c40" : "#6b3535";
+  t.style.color = ok ? "#b7f0cc" : "#ffb4b4";
+  t.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.style.display = "none", ok ? 3500 : 9000);
+}
+const fmt = n => n == null ? "—" : (n >= 1e9 ? (n/1e9).toFixed(2)+"B" :
+  n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n));
+const mb = n => n == null ? "—" : (n >= 1e9 ? (n/1e9).toFixed(2)+" GB" :
+  n >= 1e6 ? (n/1e6).toFixed(1)+" MB" : n >= 1e3 ? (n/1e3).toFixed(1)+" kB" : n + " B");
+const hora = t => new Date(t * 1000).toLocaleString("pt-BR", {day:"2-digit", month:"2-digit",
+  hour:"2-digit", minute:"2-digit"});
+
+// ------------------------------------------------------------------ abas
+$$(".tab").forEach(b => b.onclick = () => {
+  $$(".tab").forEach(x => x.classList.toggle("on", x === b));
+  $$("section").forEach(s => s.classList.toggle("on", s.id === "s-" + b.dataset.s));
+});
+
+// ------------------------------------------------------------------ listas
+let datasets = [], tokenizadores = [], tokensOpts = [], runs = [];
+
+function fill(select, itens, valor, texto) {
+  select.innerHTML = "";
+  for (const it of itens) {
+    const o = document.createElement("option");
+    o.value = it.v; o.textContent = it.t;
+    select.appendChild(o);
+  }
+  if (valor != null) select.value = valor;
+}
+
+async function carregarListas() {
+  const [d, t, r] = await Promise.all([
+    api("/api/treino/datasets"), api("/api/treino/tokenizadores"), api("/api/treino/runs")]);
+  datasets = d.datasets || [];
+  tokenizadores = t.tokenizadores || [];
+  runs = r.runs || [];
+
+  const dsOpts = datasets.map(d => ({v: d.caminho, t: `${d.caminho} · ${mb(d.bytes)}`}));
+  fill($("#ds-list"), [{v: "", t: "— escolha (ou digite o caminho) —"}, ...dsOpts]);
+  fill($("#pn-ds"), dsOpts.length ? dsOpts : [{v: "", t: "nenhum jsonl em data/"}]);
+
+  const tkOpts = tokenizadores.map(k => ({v: k.id, t: `${k.id} · vocab ${k.vocab ?? "?"}` +
+    (k.congelado ? " (congelado)" : "")}));
+  fill($("#pn-tok"), tkOpts);
+  fill($("#sf-tok"), tkOpts);
+
+  tokensOpts = [];
+  const tOpts = [];
+  try {
+    const lista = await api("/api/treino/tokens");
+    for (const t of lista.tokens || [])
+      tOpts.push({v: t.dir, t: `${t.dir} · ${fmt(t.train_tokens)} tok · vocab ${t.vocab_size}` +
+        (t.tokenizer_id ? ` · ${t.tokenizer_id}` : "")});
+  } catch (e) {}
+  fill($("#pt-tokens"), tOpts.length ? tOpts : [{v: "data/tokens", t: "data/tokens (sem meta)"}]);
+  atualizaInfoTokens();
+
+  fill($("#sf-base"), runs.filter(x => x.final).map(x => ({v: `runs/${x.nome}/final`,
+    t: `runs/${x.nome}/final`})));
+
+  const tb = $("#runs-list tbody");
+  tb.innerHTML = "";
+  for (const run of runs) {
+    const val = run.ultimo && run.ultimo.val_loss != null ? run.ultimo.val_loss.toFixed(3)
+            : run.ultimo && run.ultimo.val != null ? Number(run.ultimo.val).toFixed(3)
+            : run.ultimo && run.ultimo.val_loss == null && run.ultimo.ppl != null ? "ppl " + run.ultimo.ppl.toFixed(1) : "—";
+    const tr = document.createElement("tr");
+    tr.className = "click";
+    tr.innerHTML = `<td><b>${run.nome}</b>${run.protegido ? ' <span class="tag lock">protegido</span>' : ""}</td>` +
+      `<td>${run.steps ?? "—"}</td><td>${val}</td><td>${run.final ? "✓" : ""}</td>` +
+      `<td>${run.ckpt ? "✓" : ""}</td><td>${run.log_linhas || "—"}</td><td>${hora(run.mtime)}</td>`;
+    tr.onclick = () => curvar("#curva2", "#curva-nome", run.nome);
+    tb.appendChild(tr);
+  }
+}
+
+function atualizaInfoTokens() {
+  const dir = $("#pt-tokens").value;
+  api("/api/treino/tokens?dir=" + encodeURIComponent(dir)).then(m => {
+    const t = m.tokens; if (!t) return;
+    const glob = (+$("#pt-bs").value || 16) * (+$("#pt-ctx").value || 2048) * (+$("#pt-accum").value || 16);
+    $("#pt-info").textContent = `${fmt(t.train_tokens)} tokens de train · vocab ${t.vocab_size} · ` +
+      `batch global ${fmt(glob)} tok → 1 época ≈ ${fmt(Math.round(t.train_tokens / glob))} steps`;
+  }).catch(() => { $("#pt-info").textContent = ""; });
+}
+$("#pt-tokens").onchange = atualizaInfoTokens;
+["#pt-bs", "#pt-ctx", "#pt-accum"].forEach(s => $(s).oninput = atualizaInfoTokens);
+
+// ------------------------------------------------------------------ QA
+$("#ds-list").onchange = () => { $("#ds-path").value = $("#ds-list").value; };
+$("#ds-qa").onclick = async () => {
+  const path = $("#ds-path").value.trim();
+  if (!path) return toast("escolha ou digite o caminho do jsonl");
+  $("#ds-info").textContent = "analisando…";
+  $("#qa-out").innerHTML = "";
+  try {
+    const r = await api("/api/treino/qa?path=" + encodeURIComponent(path));
+    $("#ds-info").textContent = `${r.arquivo} · ${mb(r.bytes)}`;
+    const c = r.comprimento;
+    let html = `<div style="margin-top:12px"><span class="verdict ${r.aprovado ? "ok" : "no"}">` +
+      `${r.aprovado ? "✓ APROVADO — pode tokenizar" : "✖ REPROVADO — arrume antes"}</span></div>` +
+      `<div class="stats"><span>linhas<b>${r.linhas.toLocaleString("pt-BR")}</b></span>` +
+      `<span>content ok<b>${r.content_ok.toLocaleString("pt-BR")}</b></span>` +
+      `<span>duplicatas<b>${r.duplicatas}</b></span>` +
+      `<span>chars/doc p50<b>${c.p50.toLocaleString("pt-BR")}</b></span>` +
+      `<span>p90<b>${c.p90.toLocaleString("pt-BR")}</b></span>` +
+      `<span>total<b>${fmt(c.total_chars)} chars</b></span></div>`;
+    for (const p of r.problemas) html += `<div class="aviso linha-problema">✖ <b>${p}</b></div>`;
+    for (const a of r.avisos) html += `<div class="aviso linha-aviso">⚠ ${a}</div>`;
+    const d = r.detalhe;
+    for (const e of (d.json_erros || [])) html += `<div class="aviso linha-problema">linha ${e.linha}: ${e.motivo}</div>`;
+    for (const e of (d.content_ausente || [])) html += `<div class="aviso linha-problema">linha ${e.linha}: sem \`content\` — chaves: ${(e.chaves||[]).join(", ")}</div>`;
+    if (d.campo_candidato) html += `<div class="aviso linha-info">o campo <b>${d.campo_candidato}</b> parece ser o texto — renomeie para \`content\`</div>`;
+    if (r.amostras.length) {
+      html += `<div class="aviso linha-info">amostras: ` + r.amostras.map(a =>
+        `linha ${a.linha} (${fmt(a.chars)} chars): “${a.inicio.slice(0, 80)}…”`).join("<br>") + `</div>`;
+    }
+    $("#qa-out").innerHTML = html;
+  } catch (e) { $("#ds-info").textContent = ""; toast("QA: " + e.message); }
+};
+
+// ------------------------------------------------------------------ disparos
+function num(id, padrao) { const v = parseFloat($(id).value); return isNaN(v) ? padrao : v; }
+
+function ocupado() { return window.__status && window.__status.rodando; }
+function botões(blq) {
+  ["ds-qa", "tk-run", "pn-run", "pt-run", "sf-run"].forEach(id => $(id).disabled = blq);
+}
+
+$("#tk-run").onclick = async () => {
+  const corpo = {id: $("#tk-id").value.trim(), vocab: num("#tk-vocab", 16384),
+    sample_chars: num("#tk-sample", 1e9), min_frequency: num("#tk-minf", 2),
+    specials: $("#tk-specials").value.trim()};
+  if ($("#tk-jsonl").value.trim()) corpo.jsonl = $("#tk-jsonl").value.trim();
+  try { const r = await post("/api/treino/tokenizador", corpo);
+    toast(`job ${r.job.id} iniciado: ${r.job.titulo}`, true); limpaLog(); carregarListas(); }
+  catch (e) { toast(e.message); }
+};
+$("#pn-run").onclick = async () => {
+  const corpo = {out: $("#pn-out").value.trim(), tokenizer: $("#pn-tok").value,
+    input: "jsonl", jsonl: $("#pn-ds").value, val_pct: num("#pn-valpct", 2)};
+  if (num("#pn-max", 0) > 0) corpo.train_tokens = num("#pn-max", 0);
+  try { const r = await post("/api/treino/tokenizacao", corpo);
+    toast(`job ${r.job.id} iniciado: ${r.job.titulo}`, true); limpaLog(); carregarListas(); }
+  catch (e) { toast(e.message); }
+};
+$("#pt-run").onclick = async () => {
+  const corpo = {out: $("#pt-out").value.trim(), tokens_dir: $("#pt-tokens").value,
+    epochs: num("#pt-epochs", 1), ctx: num("#pt-ctx", 2048), batch_size: num("#pt-bs", 16),
+    accum_steps: num("#pt-accum", 16), lr: num("#pt-lr", 3e-4), min_lr: num("#pt-minlr", 3e-5),
+    warmup_steps: num("#pt-warmup", 400), device: $("#pt-dev").value,
+    retomar: $("#pt-retomar").checked, tiny: $("#pt-tiny").checked};
+  try { const r = await post("/api/treino/pretreino", corpo);
+    toast(`job ${r.job.id} iniciado: ${r.job.titulo}`, true); limpaLog(); }
+  catch (e) { toast(e.message); }
+};
+$("#sf-run").onclick = async () => {
+  const corpo = {out: $("#sf-out").value.trim(), base: $("#sf-base").value,
+    tokenizer: $("#sf-tok").value,
+    data_dir: $("#sf-data").value.trim() || "data/sft/final",
+    epochs: num("#sf-epochs", 1), max_len: num("#sf-maxlen", 1024), batch_size: num("#sf-bs", 8),
+    accum_steps: num("#sf-accum", 4), lr: num("#sf-lr", 5e-5), min_lr: num("#sf-minlr", 5e-6),
+    warmup_steps: num("#sf-warmup", 40), device: $("#sf-dev").value,
+    retomar: $("#sf-retomar").checked, tiny: $("#sf-tiny").checked};
+  try { const r = await post("/api/treino/sft", corpo);
+    toast(`job ${r.job.id} iniciado: ${r.job.titulo}`, true); limpaLog(); }
+  catch (e) { toast(e.message); }
+};
+$("#parar").onclick = async () => {
+  try { await post("/api/treino/parar", {}); toast("parando — o step corrente fecha e o checkpoint é salvo", true); }
+  catch (e) { toast(e.message); }
+};
+$("#reload").onclick = () => carregarListas();
+
+// ------------------------------------------------------------------ barra de status + hw
+async function pollStatus() {
+  try {
+    const s = await api("/api/treino/status");
+    window.__status = s;
+    const j = s.job;
+    $("#dot").className = "dot " + (j ? j.state : "");
+    if (j && (j.state === "rodando" || j.state === "parando")) {
+      const min = ((Date.now()/1000 - j.started) / 60).toFixed(1);
+      $("#jobnome").textContent = j.titulo;
+      $("#jobdet").textContent = `${j.state} · ${min} min · pid ${j.pid}`;
+      $("#parar").style.display = j.state === "rodando" ? "" : "none";
+      botões(true);
+    } else {
+      $("#jobnome").textContent = j ? `último job: ${j.titulo}` : "fila livre";
+      $("#jobdet").textContent = j ? `${j.state}${j.rc != null ? " (rc " + j.rc + ")" : ""}` : "";
+      $("#parar").style.display = "none";
+      botões(false);
+    }
+    await pollLog();
+    if (j && j.out && (j.state === "rodando" || j.state === "parando")) {
+      const nome = j.out.split("/").pop();
+      if (curvaJob !== j.id) { curvaJob = j.id; curvaTick = 0; }
+      if (curvaTick++ % 3 === 0) curvar("#curva", null, nome);   // a cada ~6 s
+    }
+  } catch (e) {}
+}
+async function pollHw() {
+  try {
+    const h = await api("/api/treino/hw");
+    const gauge = (pct) => `<span class="gauge"><i class="${pct > 90 ? "cheio" : pct > 75 ? "quase" : ""}" style="width:${pct}%"></i></span>`;
+    let gpu = "gpu —";
+    if (h.gpu && h.gpu.length) gpu = h.gpu.map(g =>
+      `gpu ${g.usada_mb}/${g.total_mb} MB <em>${g.usado_pct}%</em> ${g.temp_c}°`).join(" · ");
+    $("#hw").innerHTML = `cpu <em>${h.cpu_pct.toFixed(0)}%</em>${gauge(h.cpu_pct)} ` +
+      `ram <em>${h.ram.usada_gb}/${h.ram.total_gb} GB</em>${gauge(h.ram.pct)} ` +
+      `disco <em>${h.disco.livre_gb} GB livres</em> ${gpu}`;
+  } catch (e) {}
+}
+
+// ------------------------------------------------------------------ log
+let cursor = 0, ultimoJob = null;
+function limpaLog() { cursor = 0; $("#log").textContent = ""; }
+async function pollLog() {
+  try {
+    const l = await api("/api/treino/log?depois=" + cursor);
+    if (l.linhas.length) {
+      const el = $("#log");
+      const fundo = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+      el.textContent += (el.textContent ? "\n" : "") + l.linhas.join("\n");
+      const linhas = el.textContent.split("\n");
+      if (linhas.length > 500) el.textContent = linhas.slice(-500).join("\n");
+      if (fundo) el.scrollTop = el.scrollHeight;
+      cursor = l.cursor;
+    }
+  } catch (e) {}
+}
+
+// ------------------------------------------------------------------ curvas
+const paleta = {train: "#5b93ff", val: "#3ddc84"};
+let curvaJob = null, curvaTick = 0;
+async function curvar(svgSel, nomeSel, nome) {
+  let regs;
+  try { regs = (await api("/api/treino/runs/" + encodeURIComponent(nome))).registros; }
+  catch (e) { desenhar(svgSel, nomeSel, nome, []); return; }
+  const tr = regs.filter(r => r.step != null && r.train_loss != null).map(r => [r.step, r.train_loss]);
+  const va = regs.filter(r => r.step != null && r.val_loss != null).map(r => [r.step, r.val_loss]);
+  desenhar(svgSel, nomeSel, nome, [["train", tr], ["val", va]]);
+}
+function desenhar(svgSel, nomeSel, rotulo, series) {
+  const svg = $(svgSel);
+  const W = 600, H = 220, P = 34;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const xs = series.flatMap(([, s]) => s.map(p => p[0]));
+  const ys = series.flatMap(([, s]) => s.map(p => p[1]));
+  if (!xs.length) { svg.innerHTML = `<text x="${W/2}" y="${H/2}" fill="#5f6b7d" font-size="12" text-anchor="middle">sem registros de loss ainda</text>`; return; }
+  const x0 = Math.min(...xs), x1 = Math.max(...xs, x0 + 1);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const X = x => P + (x - x0) / (x1 - x0) * (W - P - 10);
+  const Y = y => 14 + (y1 - y) / ((y1 - y0) || 1) * (H - 34);
+  let out = "";
+  for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+    const y = y0 + (y1 - y0) * t;
+    out += `<line x1="${P}" y1="${Y(y)}" x2="${W - 10}" y2="${Y(y)}" stroke="#1f2632"/>` +
+           `<text x="${P - 4}" y="${Y(y) + 4}" fill="#5f6b7d" font-size="10" text-anchor="end">${y.toFixed(1)}</text>`;
+  }
+  for (const [nome, s] of series) {
+    if (!s.length) continue;
+    const d = s.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    out += `<path d="${d}" fill="none" stroke="${paleta[nome]}" stroke-width="1.6"/>`;
+  }
+  out += `<text x="${P}" y="${H - 6}" fill="#5f6b7d" font-size="10">step ${x0}</text>` +
+         `<text x="${W - 10}" y="${H - 6}" fill="#5f6b7d" font-size="10" text-anchor="end">step ${x1}</text>`;
+  let lx = P;
+  for (const [nome, s] of series) if (s.length) {
+    out += `<text x="${lx}" y="12" fill="${paleta[nome]}" font-size="11">${nome} (${s[s.length-1][1].toFixed(3)})</text>`;
+    lx += 120;
+  }
+  svg.innerHTML = out;
+  if (nomeSel) $(nomeSel).textContent = rotulo;
+}
+
+// ------------------------------------------------------------------ arranque
+carregarListas();
+pollStatus(); pollHw();
+setInterval(pollStatus, 2000);
+setInterval(pollHw, 2000);
+setInterval(() => { if (!ocupado()) carregarListas(); }, 30000);
+</script>
+</body>
+</html>

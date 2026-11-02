@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import sys
 import threading
@@ -59,18 +60,26 @@ from tokenizers import Tokenizer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # scripts/ lado a lado (qa_dataset)
 
+import qa_dataset  # noqa: E402
 from pingo.didatic import (LIDA_PADRAO, MAX_AMOSTRA_TOKENS, MAX_ATTN_TOKENS,  # noqa: E402
                            MAX_LAB_CHARS, MAX_LAB_TOKENS, MAX_LOOP_NOVOS, TabelaEmbeddings,
                            TOPK_LMHEAD, VIZINHOS_PADRAO, buscar, especial_ids, ficha_bloco,
                            ficha_lmhead, menu_amostra, roda_loop, tokenizar, texto_legivel)
 from pingo.generate import generate_stream  # noqa: E402
+from pingo.jobs import JobOcupado, JobRunner, hw  # noqa: E402
 from pingo.model import PingoLM  # noqa: E402
 from pingo.sft import ASSISTANT_TOKEN, END_TOKEN, USER_TOKEN, chat_token_ids  # noqa: E402
 
 MAX_PROMPT_CHARS = 4000
 MAX_CONTEXT_CHARS = 6000
 PAGINA_LAB = ROOT / "web" / "lab.html"
+PAGINA_TREINO = ROOT / "web" / "treino.html"
+
+# treino-4: nomes de artefatos (runs/, data/tokens/, tokenizer/) — sem trilha de path
+NOME_Ok = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RUNS_PROTEGIDOS = {"pt-120m", "pt-120m-BACKUP-2026-10-30"}   # AGENTS.md: não se sobrescreve
 
 
 # ---------------------------------------------------------------- modelos
@@ -107,6 +116,7 @@ class Server:
         self._captura: tuple[tuple, dict] | None = None   # última captura de atenção (③)
         self._load_lock = threading.Lock()
         self._gen_lock = threading.Lock()
+        self._jobs = None                                   # JobRunner (treino-4), via create_app
 
     # -- tokenizer e tabela de embeddings (o que o laboratório usa: CPU) --
     def arquivo_tokenizador(self, spec: ModelSpec) -> Path:
@@ -191,7 +201,16 @@ class Server:
         return saida
 
     # -- ciclo de vida -------------------------------------------------
+    def esta_carregado(self) -> bool:
+        return self._loaded is not None
+
     def carregar(self, model_id: str) -> Loaded:
+        # treino-4: com um job de treino rodando, NINGUÉM carrega modelo — a VRAM é uma só
+        # e o filho do JobRunner precisa dela inteira. O chat espera o job terminar.
+        if self._jobs is not None and self._jobs.rodando():
+            raise RuntimeError(
+                "há um job de treino rodando — o chat e o lab só carregam o modelo quando "
+                "a fila do /treino esvaziar")
         with self._load_lock:
             if self._loaded and self._loaded.spec.id == model_id:
                 return self._loaded
@@ -331,11 +350,13 @@ def montar_prompt_lab(texto: str, instrucao: bool = True) -> str:
     return f"{USER_TOKEN}{texto}{ASSISTANT_TOKEN}" if instrucao else texto
 
 
-def create_app(server: Server | None = None) -> Flask:
+def create_app(server: Server | None = None, jobs: JobRunner | None = None) -> Flask:
     app = Flask(__name__)
     app.config["PINGO"] = server or Server(
         [ModelSpec("sft", "Pingo SFT (instrução)", ROOT / "runs" / "sft-120m-ep1" / "final", True),
          ModelSpec("base", "Pingo base (pré-treino)", ROOT / "runs" / "pt-120m" / "final", False)])
+    app.config["JOBS"] = jobs if jobs is not None else JobRunner()
+    app.config["PINGO"]._jobs = app.config["JOBS"]
     app.json.ensure_ascii = False
 
     @app.get("/")
@@ -794,6 +815,401 @@ def create_app(server: Server | None = None) -> Flask:
             return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
         return jsonify({"consulta": consulta, "modelo": model_id, "achados": achados})
 
+    # -- interface de treino (/treino, treino-4) ----------------------------------
+    # A UI não treina nada sozinha: ela monta o argv dos scripts de sempre e entrega ao
+    # JobRunner (fila de um job, SIGTERM no "parar"). Validação defensiva: nomes de
+    # artefato são `[A-Za-z0-9._-]` (NOME_Ok), runs protegidos não se sobrescrevem, e
+    # caminho fora do repo é rejeitado — o servidor escuta na LAN sem autenticação.
+
+    jobs: JobRunner = app.config["JOBS"]
+    srv_global: Server = app.config["PINGO"]
+
+    def _nome_ok(nome: str) -> bool:
+        return bool(NOME_Ok.match(nome or ""))
+
+    def _caminho_livre(p: str) -> Path | None:
+        """Caminho (relativo ao repo ou absoluto) dentro do repo; None se inválido."""
+        if not p:
+            return None
+        q = Path(p)
+        q = q if q.is_absolute() else ROOT / q
+        try:
+            q = q.resolve()
+        except OSError:
+            return None
+        return q if q.is_relative_to(ROOT) else None
+
+    def _desocupa_gpu() -> None:
+        """Job de GPU vai começar: descarrega o modelo do chat (a VRAM é uma só)."""
+        if srv_global.esta_carregado():
+            srv_global.descarregar()
+
+    def _erro_ocupado(exc: Exception):
+        return jsonify({"erro": str(exc),
+                        "job": jobs.current.resumo() if jobs.current else None}), 429
+
+    @app.get("/treino")
+    def treino():
+        if not PAGINA_TREINO.exists():
+            return jsonify({"erro": f"página do treino ausente: {PAGINA_TREINO}"}), 500
+        return send_file(PAGINA_TREINO, mimetype="text/html")
+
+    @app.get("/api/treino/status")
+    def treino_status():
+        return jsonify(jobs.estado())
+
+    @app.get("/api/treino/hw")
+    def treino_hw():
+        return jsonify(hw())
+
+    @app.get("/api/treino/log")
+    def treino_log():
+        depois = int(_num(request.args, "depois", 0, 0, 10**9, inteiro=True))
+        linhas = jobs.saida(depois)
+        return jsonify({"linhas": linhas, "cursor": depois + len(linhas),
+                        "state": jobs.current.state if jobs.current else None})
+
+    @app.post("/api/treino/parar")
+    def treino_parar():
+        if not jobs.parar():
+            return jsonify({"erro": "não há job rodando para parar"}), 400
+        return jsonify({"parando": True})
+
+    # -- datasets -----------------------------------------------------------------
+
+    @app.get("/api/treino/datasets")
+    def treino_datasets():
+        achados = []
+        for p in sorted(ROOT.glob("data/**/*.jsonl")):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if not p.is_file():
+                continue
+            achados.append({"caminho": str(p.relative_to(ROOT)), "bytes": st.st_size,
+                            "mtime": round(st.st_mtime, 1)})
+        return jsonify({"datasets": achados[:400]})
+
+    @app.get("/api/treino/qa")
+    def treino_qa():
+        path = _caminho_livre(request.args.get("path") or "")
+        if path is None or not path.is_file():
+            return jsonify({"erro": f"arquivo não encontrado no repo: {request.args.get('path')!r}"}), 404
+        if path.suffix != ".jsonl":
+            return jsonify({"erro": "a QA entende JSONL (uma linha = um objeto JSON)"}), 400
+        try:
+            return jsonify(qa_dataset.analisar(path))
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"erro": f"{type(exc).__name__}: {exc}"}), 500
+
+    # -- tokenizadores e tokens (leitura) -------------------------------------------
+
+    @app.get("/api/treino/tokens")
+    def treino_tokens():
+        """Sem `dir`: lista todo data/tokens/<x> com meta.json. Com `dir`: só ele."""
+        base_dir = request.args.get("dir")
+        if base_dir:
+            d = _caminho_livre(base_dir)
+            dirs = [d] if d is not None else []
+            if not dirs:
+                return jsonify({"erro": f"diretório inválido: {base_dir!r}"}), 400
+        else:
+            base = ROOT / "data" / "tokens"
+            dirs = [base] + ([x for x in sorted(base.iterdir()) if x.is_dir()]
+                             if base.is_dir() else [])
+        itens = []
+        for d in dirs:
+            meta = d / "meta.json"
+            if not meta.exists():
+                if base_dir:
+                    return jsonify({"erro": f"{base_dir} não tem meta.json — tokenizá-lo antes",
+                                    "tokens": None}), 404
+                continue
+            try:
+                m = json.loads(meta.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                if base_dir:
+                    return jsonify({"erro": f"meta.json ilegível: {exc}"}), 500
+                continue
+            rel = str(d.relative_to(ROOT)) if d.is_relative_to(ROOT) else str(d)
+            itens.append({"dir": rel, **{k: m.get(k) for k in (
+                "vocab_size", "tokenizer", "tokenizer_id", "train_tokens", "val_tokens",
+                "train_shards", "val_shards", "input", "jsonl", "val_pct")}})
+        return jsonify({"tokens": itens[0] if base_dir else itens})
+
+    @app.get("/api/treino/tokenizadores")
+    def treino_tokenizadores():
+        itens = []
+        base = ROOT / "tokenizer"
+        for sub in sorted(base.iterdir()) if base.is_dir() else []:
+            stats = sub / "vocab_stats.json"
+            if sub.is_dir() and (sub / "tokenizer.json").exists():
+                ficha = {}
+                if stats.exists():
+                    try:
+                        ficha = json.loads(stats.read_text(encoding="utf-8"))
+                    except json.JSONDecodeError:
+                        pass
+                itens.append({"id": sub.name, "vocab": ficha.get("vocab_size"),
+                              "especiais": ficha.get("special_tokens"),
+                              "chars_por_token": ficha.get("our_chars_per_token"),
+                              "corpus": ficha.get("corpus"), "criado": sub.stat().st_mtime})
+        default = base / "tokenizer.json"
+        if default.exists():
+            ficha = {}
+            if (base / "vocab_stats.json").exists():
+                try:
+                    ficha = json.loads((base / "vocab_stats.json").read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    pass
+            itens.insert(0, {"id": "default", "vocab": ficha.get("vocab_size") or 16_384,
+                             "especiais": ficha.get("special_tokens"),
+                             "chars_por_token": ficha.get("our_chars_per_token"),
+                             "corpus": ficha.get("corpus"), "congelado": True})
+        return jsonify({"tokenizadores": itens})
+
+    # -- runs (histórico) -----------------------------------------------------------
+
+    @app.get("/api/treino/runs")
+    def treino_runs():
+        itens = []
+        for sub in sorted((ROOT / "runs").iterdir()) if (ROOT / "runs").is_dir() else []:
+            if not sub.is_dir():
+                continue
+            log = sub / "log.jsonl"
+            ultimo, n_linhas = None, 0
+            if log.exists():
+                try:
+                    with log.open(encoding="utf-8", errors="replace") as fh:
+                        for linha in fh:
+                            if linha.strip():
+                                n_linhas += 1
+                                try:
+                                    ultimo = json.loads(linha)
+                                except json.JSONDecodeError:
+                                    pass
+                except OSError:
+                    pass
+            itens.append({"nome": sub.name, "protegido": sub.name in RUNS_PROTEGIDOS,
+                          "final": (sub / "final").is_dir(),
+                          "ckpt": (sub / "ckpt.pt").exists(),
+                          "steps": (ultimo or {}).get("step"),
+                          "ultimo": ultimo, "log_linhas": n_linhas,
+                          "mtime": round(sub.stat().st_mtime, 1)})
+        return jsonify({"runs": sorted(itens, key=lambda r: -r["mtime"])})
+
+    @app.get("/api/treino/runs/<nome>")
+    def treino_run(nome: str):
+        if not _nome_ok(nome):
+            return jsonify({"erro": f"nome de run inválido: {nome!r}"}), 400
+        d = ROOT / "runs" / nome
+        log = d / "log.jsonl"
+        if not d.is_dir() or not log.exists():
+            return jsonify({"erro": f"run {nome} não tem log.jsonl"}), 404
+        registros = []
+        with log.open(encoding="utf-8", errors="replace") as fh:
+            for linha in fh:
+                try:
+                    registros.append(json.loads(linha))
+                except json.JSONDecodeError:
+                    continue
+        return jsonify({"nome": nome, "registros": registros[-4000:]})
+
+    # -- disparar jobs --------------------------------------------------------------
+
+    @app.post("/api/treino/tokenizador")
+    def treino_tokenizador():
+        if jobs.rodando():
+            return _erro_ocupado(JobOcupado(f"job {jobs.current.titulo} está {jobs.current.state}"))
+        dados = request.get_json(silent=True) or {}
+        tid = dados.get("id") or ""
+        if not _nome_ok(tid) or tid == "tokenizer":
+            return jsonify({"erro": "id inválido — use letras, números, ponto, hífen (≤64)"}), 400
+        destino = ROOT / "tokenizer" / tid
+        if (destino / "tokenizer.json").exists():
+            return jsonify({"erro": f"tokenizer/{tid} já existe — escolha outro id "
+                                    "(um escritor por saída)"}), 409
+        argv = ["scripts/train_tokenizer.py", "--id", tid, "--out", str(destino)]
+        jsonl = _caminho_livre(dados.get("jsonl") or "")
+        if dados.get("jsonl"):
+            if jsonl is None or not jsonl.is_file():
+                return jsonify({"erro": f"corpus jsonl não encontrado: {dados['jsonl']!r}"}), 400
+            argv += ["--jsonl", str(jsonl)]
+        argv += ["--vocab", str(int(_num(dados, "vocab", 16_384, 512, 256_000, inteiro=True))),
+                 "--sample-chars", str(int(_num(dados, "sample_chars", 1_000_000_000,
+                                                10_000, 10**11, inteiro=True))),
+                 "--min-frequency", str(int(_num(dados, "min_frequency", 2, 1, 100, inteiro=True)))]
+        if dados.get("specials"):
+            argv += ["--specials", str(dados["specials"])]
+        try:
+            _desocupa_gpu()
+            job = jobs.iniciar("tokenizador", f"tokenizer {tid}", argv, out=str(destino))
+        except JobOcupado as exc:
+            return _erro_ocupado(exc)
+        return jsonify({"job": job.resumo()}), 202
+
+    @app.post("/api/treino/tokenizacao")
+    def treino_tokenizacao():
+        if jobs.rodando():
+            return _erro_ocupado(JobOcupado(f"job {jobs.current.titulo} está {jobs.current.state}"))
+        dados = request.get_json(silent=True) or {}
+        out_nome = dados.get("out") or ""
+        if not _nome_ok(out_nome):
+            return jsonify({"erro": "nome de saída inválido (em data/tokens/<nome>)"}), 400
+        out = ROOT / "data" / "tokens" / out_nome
+        if any(out.iterdir()) if out.is_dir() else False:
+            return jsonify({"erro": f"data/tokens/{out_nome} já tem arquivos — use outro nome "
+                                    "(o prepare_tokens é um escritor por saída)"}), 409
+        tok = str(dados.get("tokenizer") or "tokenizer")
+        tok_dir = _caminho_livre(tok if "/" in tok else f"tokenizer/{tok}")
+        if tok_dir is None or not (tok_dir / "tokenizer.json").exists():
+            return jsonify({"erro": f"tokenizer {tok!r} não encontrado em tokenizer/"}), 400
+        argv = ["scripts/prepare_tokens.py", "--tokenizer", str(tok_dir), "--out", str(out)]
+        if dados.get("input") == "jsonl":
+            jsonl = _caminho_livre(dados.get("jsonl") or "")
+            if jsonl is None or not jsonl.is_file():
+                return jsonify({"erro": f"dataset jsonl não encontrado: {dados.get('jsonl')!r}"}), 400
+            argv += ["--input", "jsonl", "--jsonl", str(jsonl),
+                     "--val-pct", str(int(_num(dados, "val_pct", 2, 0, 50, inteiro=True)))]
+        if dados.get("train_tokens"):
+            argv += ["--train-tokens", str(int(_num(dados, "train_tokens", 1, 0, 10**12,
+                                                    inteiro=True)))]
+        try:
+            _desocupa_gpu()
+            job = jobs.iniciar("tokenizacao", f"tokens {out_nome}", argv, out=str(out))
+        except JobOcupado as exc:
+            return _erro_ocupado(exc)
+        return jsonify({"job": job.resumo()}), 202
+
+    def _valida_run_novo(nome: str, rotulo: str):
+        """(out, erro, status): runs protegidos nunca; diretório ocupado pede retomar."""
+        if not _nome_ok(nome):
+            return None, f"nome de {rotulo} inválido — use letras, números, ponto, hífen", 400
+        out = ROOT / "runs" / nome
+        if nome in RUNS_PROTEGIDOS:
+            return None, f"runs/{nome} é protegido (resultado histórico do projeto)", 403
+        return out, None, 200
+
+    @app.post("/api/treino/pretreino")
+    def treino_pretreino():
+        if jobs.rodando():
+            return _erro_ocupado(JobOcupado(f"job {jobs.current.titulo} está {jobs.current.state}"))
+        dados = request.get_json(silent=True) or {}
+        out, erro, status = _valida_run_novo(dados.get("out") or "pt-novo", "run")
+        if erro:
+            return jsonify({"erro": erro}), status
+        retomar = bool(dados.get("retomar"))
+        if any(out.iterdir()) if out.is_dir() else False:
+            if not retomar:
+                return jsonify({"erro": f"runs/{out.name} já existe — marque 'retomar' "
+                                        "para continuar do checkpoint"}), 409
+            if not (out / "ckpt.pt").exists():
+                return jsonify({"erro": f"runs/{out.name} não tem ckpt.pt para retomar"}), 400
+        tok = _caminho_livre(dados.get("tokens_dir") or "data/tokens")
+        if tok is None or not (tok / "meta.json").exists():
+            return jsonify({"erro": f"tokens inválidos: {dados.get('tokens_dir') or 'data/tokens'} "
+                                    "não tem meta.json"}), 400
+
+        bs = int(_num(dados, "batch_size", 16, 1, 512, inteiro=True))
+        accum = int(_num(dados, "accum_steps", 16, 1, 128, inteiro=True))
+        ctx = int(_num(dados, "ctx", 2048, 32, 8192, inteiro=True))
+        argv = ["scripts/train.py", "--tokens-dir", str(tok), "--out", str(out),
+                "--ctx", str(ctx), "--batch-size", str(bs), "--accum-steps", str(accum),
+                "--lr", str(_num(dados, "lr", 3e-4, 1e-6, 1e-1)),
+                "--min-lr", str(_num(dados, "min_lr", 3e-5, 1e-8, 1e-2)),
+                "--warmup-steps", str(int(_num(dados, "warmup_steps", 400, 0, 100_000,
+                                               inteiro=True))),
+                "--weight-decay", str(_num(dados, "weight_decay", 0.1, 0.0, 1.0)),
+                "--eval-steps", str(int(_num(dados, "eval_steps", 250, 1, 100_000,
+                                             inteiro=True))),
+                "--seed", str(int(_num(dados, "seed", 13, 0, 2**31 - 1, inteiro=True)))]
+        if dados.get("max_steps"):
+            argv += ["--max-steps", str(int(_num(dados, "max_steps", 1, 1, 10**9,
+                                                 inteiro=True)))]
+        elif dados.get("epochs"):
+            # train.py não tem --epochs: a época é contada sobre os tokens do meta.json
+            meta = json.loads((tok / "meta.json").read_text(encoding="utf-8"))
+            epochs = _num(dados, "epochs", 1.0, 0.01, 1000.0)
+            glob = bs * ctx * accum
+            argv += ["--max-steps", str(max(1, round(epochs * meta["train_tokens"] / glob)))]
+        if dados.get("device") in ("cuda", "cpu"):
+            argv += ["--device", dados["device"]]
+        if dados.get("tiny"):
+            argv += ["--tiny"]          # dry-run CPU: o mesmo caminho dos testes
+        if dados.get("compile"):
+            argv += ["--compile"]
+        env = {"CUDA_VISIBLE_DEVICES": ""} if dados.get("device") == "cpu" else None
+        if retomar:
+            argv += ["--resume"]
+        try:
+            if dados.get("device") != "cpu":
+                _desocupa_gpu()
+            job = jobs.iniciar("pretreino", f"pré-treino {out.name}", argv, out=str(out),
+                               precisa_gpu=dados.get("device") != "cpu", env=env)
+        except JobOcupado as exc:
+            return _erro_ocupado(exc)
+        return jsonify({"job": job.resumo()}), 202
+
+    @app.post("/api/treino/sft")
+    def treino_sft():
+        if jobs.rodando():
+            return _erro_ocupado(JobOcupado(f"job {jobs.current.titulo} está {jobs.current.state}"))
+        dados = request.get_json(silent=True) or {}
+        out, erro, status = _valida_run_novo(dados.get("out") or "sft-novo", "run")
+        if erro:
+            return jsonify({"erro": erro}), status
+        retomar = bool(dados.get("retomar"))
+        if any(out.iterdir()) if out.is_dir() else False:
+            if not retomar:
+                return jsonify({"erro": f"runs/{out.name} já existe — marque 'retomar' "
+                                        "para continuar do checkpoint"}), 409
+            if not (out / "ckpt.pt").exists():
+                return jsonify({"erro": f"runs/{out.name} não tem ckpt.pt para retomar"}), 400
+        base = _caminho_livre(dados.get("base") or "runs/pt-120m/final")
+        if base is None or not (base / "config.json").exists():
+            return jsonify({"erro": f"modelo base inválido: {dados.get('base') or 'runs/pt-120m/final'} "
+                                    "(espere config.json + model.safetensors)"}), 400
+        tok = _caminho_livre(dados.get("tokenizer") or "tokenizer")
+        if tok is None or not (tok / "tokenizer.json").exists():
+            return jsonify({"erro": f"tokenizer inválido: {dados.get('tokenizer') or 'tokenizer'}"}), 400
+        dados_dir = _caminho_livre(dados.get("data_dir") or "data/sft/final")
+        if dados_dir is None or not (dados_dir / "train.jsonl").exists():
+            return jsonify({"erro": f"data_dir inválida: {dados.get('data_dir') or 'data/sft/final'} "
+                                    "(espere train.jsonl)"}), 400
+
+        argv = ["scripts/train_sft.py", "--data-dir", str(dados_dir), "--base", str(base),
+                "--tokenizer", str(tok), "--out", str(out),
+                "--max-len", str(int(_num(dados, "max_len", 1024, 64, 4096, inteiro=True))),
+                "--batch-size", str(int(_num(dados, "batch_size", 8, 1, 512, inteiro=True))),
+                "--accum-steps", str(int(_num(dados, "accum_steps", 4, 1, 128, inteiro=True))),
+                "--epochs", str(_num(dados, "epochs", 1.0, 0.01, 1000.0)),
+                "--lr", str(_num(dados, "lr", 5e-5, 1e-7, 1e-1)),
+                "--min-lr", str(_num(dados, "min_lr", 5e-6, 1e-9, 1e-2)),
+                "--warmup-steps", str(int(_num(dados, "warmup_steps", 40, 0, 100_000,
+                                               inteiro=True))),
+                "--weight-decay", str(_num(dados, "weight_decay", 0.1, 0.0, 1.0)),
+                "--eval-steps", str(int(_num(dados, "eval_steps", 200, 1, 100_000,
+                                             inteiro=True))),
+                "--seed", str(int(_num(dados, "seed", 13, 0, 2**31 - 1, inteiro=True)))]
+        if dados.get("device") in ("cuda", "cpu"):
+            argv += ["--device", dados["device"]]
+        if dados.get("tiny"):
+            argv += ["--tiny"]
+        if dados.get("compile"):
+            argv += ["--compile"]
+        env = {"CUDA_VISIBLE_DEVICES": ""} if dados.get("device") == "cpu" else None
+        if retomar:
+            argv += ["--resume"]
+        try:
+            if dados.get("device") != "cpu":
+                _desocupa_gpu()
+            job = jobs.iniciar("sft", f"SFT {out.name}", argv, out=str(out),
+                               precisa_gpu=dados.get("device") != "cpu", env=env)
+        except JobOcupado as exc:
+            return _erro_ocupado(exc)
+        return jsonify({"job": job.resumo()}), 202
+
     return app
 
 
@@ -870,6 +1286,9 @@ def main(argv=None) -> None:
                     device=args.device)
     if not server.specs:
         sys.exit("nenhum checkpoint de SFT nem de base em runs/")
+    jobs = JobRunner()   # caça órfão na hora: se a webui anterior morreu treinando, o fim vem agora
+    if jobs.historico and jobs.historico[-1].get("motivo"):
+        print(f"aviso: {jobs.historico[-1]['titulo']} — {jobs.historico[-1]['motivo']}")
     print(f"Pingo WebUI — device {server.device} — modelos: {', '.join(server.specs)}")
     print(f"  local:      http://127.0.0.1:{args.port}")
     if args.host in ("0.0.0.0", "::"):
@@ -879,8 +1298,8 @@ def main(argv=None) -> None:
         print("  atenção:    sem autenticação — qualquer um na mesma rede usa o modelo")
     else:
         print(f"  escutando:  {args.host}:{args.port} (só este host)")
-    create_app(server).run(host=args.host, port=args.port, threaded=True,
-                           debug=False, use_reloader=False)
+    create_app(server, jobs).run(host=args.host, port=args.port, threaded=True,
+                                 debug=False, use_reloader=False)
 
 
 # ---------------------------------------------------------------- página
@@ -1040,6 +1459,7 @@ PAGE = """<!doctype html>
     </div>
     <div class="spacer"></div>
     <a class="lablink" href="/lab" title="Ver o modelo por dentro: tokenização, cores, embeddings">🔬 laboratório</a>
+    <a class="lablink" href="/treino" title="Dataset, tokenização e treino com monitor">🏋️ treino</a>
     <div class="models" id="models"></div>
   </header>
 

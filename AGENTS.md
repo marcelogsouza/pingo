@@ -22,7 +22,10 @@ steps, 2,75B tokens, 7,56 h, val **2,507 / ppl 11,67**, geração de pt coerente
 100%, F1 0,375, fidelidade 0,59, ppl do pré-treino **1,91×**. WebUI em Flask para conversar
 com ele e um **modo didático em `/lab`** — o curso de sete passos (① tokenização → ⑦ loop +
 KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas moram em
-`docs/07-sft/Modo didático.md`. Suíte: **193 testes verdes**.
+`docs/07-sft/Modo didático.md`. **Interface de treino em `/treino` concluída** (Passo 13,
+treino-1…5, 2026-11-02): QA de dataset, tokenização (vocab por experimento `tokenizer/<id>/`),
+pré-treino/SFT com fila de 1 job, parar (SIGTERM→ckpt) e retomar, curva de loss e HW — o
+contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
@@ -31,7 +34,7 @@ KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas 
 | dataset | `data/sft/final/` (26.479/1.581/1.455) | ✅ validado, sem vazamento |
 | SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
 | avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
-| WebUI | `./scripts/webui.sh` (Ctrl+C desliga) → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming; o `/lab` (curso ①–⑦) está fechado — `docs/07-sft/Modo didático.md` |
+| WebUI | `./scripts/webui.sh` (Ctrl+C desliga) → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming; o `/lab` (curso ①–⑦) está fechado — `docs/07-sft/Modo didático.md`; o `/treino` (QA→tokens→pré-treino/SFT monitorado) está fechado — `docs/07-sft/Interface de treino.md` |
 
 - **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas
   esquece o português (fator 6,94× contra 1,91×). Ficou como contraexemplo em
@@ -45,7 +48,7 @@ KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas 
 
 1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
-2. `uv run pytest -q` → **193 verdes** (CPU, ~14 s).
+2. `uv run pytest -q` → **227 verdes** (CPU, ~85 s — os jobs de subprocess pesam).
 3. `./scripts/webui.sh` (ou `uv run python scripts/webui.py`; o script derruba a instância
    anterior e desliga com Ctrl+C) e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
    imprime): se o chat responder, o modelo e a GPU estão de pé. (A porta 8000 desta máquina é
@@ -71,6 +74,11 @@ KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas 
   trava. Não recriar um segundo filtro nem um segundo loop.
 - **Um escritor por saída.** Dois `gen_sft.py` no mesmo JSONL corrompem o arquivo; dois
   `train_sft.py` no mesmo `--out` idem. A WebUI também ocupa GPU: rode uma geração por vez.
+- **Treino disparado é só pelo `JobRunner`** (`pingo/jobs.py` — o `/treino` e nada mais):
+  fila de 1 job, `runs/jobs.json`, caça ao órfão no boot, e com job rodando o chat **não
+  carrega modelo** (a VRAM é uma só). `runs/pt-120m` e o backup são protegidos por nome (403)
+  na API; `tokenizer/` default continua intocado — vocab novo é `tokenizer/<id>/` e o
+  `meta.json` dos tokens manda no `vocab_size` (o `train.py` deriva dele).
 
 ## Convenções
 
