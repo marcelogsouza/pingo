@@ -148,3 +148,62 @@ def test_ckpt_payload_e_logs(tokens_dir, tmp_path):
     data = train.load_tokens(tokens_dir)
     glob = args.batch_size * args.ctx * args.accum_steps
     assert (args.max_steps or max(1, round(data.meta["train_tokens"] / glob))) == 36
+
+
+# ---------------------------------------------------------------- parada graciosa (treino-1)
+
+
+def test_interromper_antes_do_loop_grava_ckpt_e_evento(tokens_dir, tmp_path, monkeypatch):
+    """O caminho do SIGTERM/SIGINT: ckpt no step corrente, evento no log, SEM `final/`."""
+    monkeypatch.setattr(train, "INTERROMPER", True)
+    out = tmp_path / "run"
+    res = train.run(base_args(tokens_dir, out, max_steps=10))
+    assert res["interrompido"] is True and res["step"] == 0
+
+    ck = torch.load(out / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert ck["step"] == 0 and set(ck) == {"step", "model", "opt", "rng", "args"}
+    recs = [json.loads(l) for l in (out / "log.jsonl").read_text().splitlines()]
+    assert any(r.get("evento") == "interrompido" for r in recs)
+    assert not (out / "final").exists()   # treino incompleto nunca vira "final"
+
+
+def test_sigterm_real_para_o_processo_e_resume_conclui(tokens_dir, tmp_path):
+    """SIGTERM de verdade (é o que a WebUI vai mandar): rc 130, ckpt íntegro, resume vale."""
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "sigterm"
+    # sem CUDA no filho: com a GPU da máquina saturada (Strata/professor), até o health
+    # check do `opt.step()` tenta cuInit e pode OOM — um teste de parada não deve depender
+    # da VRAM de terceiros.
+    env = os.environ | {"CUDA_VISIBLE_DEVICES": ""}
+    opts = ["--tokens-dir", str(tokens_dir), "--out", str(out), "--tiny", "--device", "cpu",
+            "--ctx", "32", "--batch-size", "4", "--accum-steps", "2", "--warmup-steps", "2",
+            "--eval-steps", "1000", "--log-steps", "1", "--ckpt-min", "1000000", "--seed", "7"]
+    exe = [sys.executable, str(ROOT / "scripts" / "train.py")]
+
+    proc = subprocess.Popen(exe + opts + ["--max-steps", "100000"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    linha = ""
+    while "params" not in linha:            # espera o treino começar (o handler já instalado)
+        linha = proc.stdout.readline()
+        if proc.poll() is not None:
+            pytest.fail(f"o processo morreu antes de treinar: {linha!r}")
+    proc.terminate()                        # SIGTERM — o "parar" da interface
+    rc = proc.wait(timeout=30)
+    saida = proc.stdout.read()
+    assert rc == 130, f"rc={rc}\n--- stdout do filho ---\n{saida[-2000:]}"
+
+    ck = torch.load(out / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert ck["step"] >= 0
+    recs = [json.loads(l) for l in (out / "log.jsonl").read_text().splitlines()]
+    assert any(r.get("evento") == "interrompido" for r in recs)
+    assert not (out / "final").exists()
+
+    # retomar: do step salvo até +2 steps — tem que concluir (exit 0) e gravar final/
+    resumed = subprocess.run(exe + opts + ["--max-steps", str(ck["step"] + 2), "--resume"],
+                             capture_output=True, text=True, timeout=120, env=env)
+    assert resumed.returncode == 0, resumed.stdout
+    assert f"retomando do step {ck['step']}" in resumed.stdout
+    assert (out / "final" / "model.safetensors").exists()

@@ -32,6 +32,7 @@ import contextlib
 import json
 import math
 import random
+import signal
 import sys
 import time
 from dataclasses import dataclass, field
@@ -48,6 +49,19 @@ from pingo.model import PingoLM
 from pingo.sft import chat_token_ids, ensure_chat_tokens, render
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# treino-3 (parada graciosa): igual ao train.py — SIGTERM pede pausa, o loop para no
+# fim do step, checkpoint + evento no log, e o --resume continua dali.
+INTERROMPER = False
+
+
+def _ao_receber_sigterm(signum, frame) -> None:
+    global INTERROMPER
+    INTERROMPER = True
+
+
+def instalar_tratador_de_sinais() -> None:
+    signal.signal(signal.SIGTERM, _ao_receber_sigterm)
 
 
 # ---------------------------------------------------------------- dados
@@ -264,6 +278,7 @@ def run(args: argparse.Namespace) -> dict:
     global device
     if args.device:
         device = args.device
+    instalar_tratador_de_sinais()
     torch.manual_seed(args.seed)
     np_rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
@@ -335,8 +350,12 @@ def run(args: argparse.Namespace) -> dict:
 
     last_log, last_ckpt, loss_sum, tok_sum = time.time(), time.time(), 0.0, 0
     best_val = math.inf
+    interrompido = False
     try:
         while step < max_steps:
+            if INTERROMPER:  # SIGTERM da UI: para no limite do step, nada pela metade
+                interrompido = True
+                break
             lr = lr_at(step, args, max_steps)
             for g in opt.param_groups:
                 g["lr"] = lr
@@ -386,11 +405,16 @@ def run(args: argparse.Namespace) -> dict:
                 last_ckpt = time.time()
                 print(f"step {step:5d} | checkpoint em {ckpt_path}")
     except KeyboardInterrupt:
-        save_ckpt(ckpt_path, model, opt, step, args, np_rng)
-        print(f"\ninterrompido no step {step} — retome com --resume")
-        raise
+        interrompido = True
     finally:
+        if interrompido:
+            log(evento="interrompido")
+            save_ckpt(ckpt_path, model, opt, step, args, np_rng)
+            print(f"\ninterrompido no step {step} — ckpt salvo; retome com --resume")
         logf.close()
+
+    if interrompido:
+        return {"step": step, "best_val": best_val, "interrompido": True}
 
     save_ckpt(ckpt_path, model, opt, step, args, np_rng)
     final = args.out / "final"
@@ -404,4 +428,6 @@ def run(args: argparse.Namespace) -> dict:
 
 
 if __name__ == "__main__":
-    run(parse_args())
+    resultado = run(parse_args())
+    if resultado.get("interrompido"):
+        sys.exit(130)  # 128 + SIGINT: parada pedida, não erro — o --resume continua

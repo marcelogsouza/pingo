@@ -254,3 +254,44 @@ def test_dataset_vazio_avisa(tmp_path, monkeypatch):
     (tmp_path / "data" / "val.jsonl").write_text("")
     with pytest.raises(SystemExit):
         t.run(t.parse_args(_run_args(tmp_path, tmp_path / "run")))
+
+
+# ---------------------------------------------------------------- parada graciosa (treino-1)
+
+
+def test_interromper_grava_ckpt_e_evento_sem_final(tmp_path, monkeypatch):
+    """SIGTERM/SIGINT no SFT: ckpt no step corrente + evento; `final/` não nasce de run incompleto."""
+    import tokenizers
+
+    monkeypatch.setattr(tokenizers, "Tokenizer", FakeTokenizer)
+    monkeypatch.setattr(t, "INTERROMPER", True)
+    _dataset(tmp_path / "data")
+    out = tmp_path / "run"
+    res = t.run(t.parse_args(_run_args(tmp_path, out)))
+    assert res["interrompido"] is True and res["step"] == 0
+
+    ck = torch.load(out / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert ck["step"] == 0
+    logs = [json.loads(x) for x in (out / "log.jsonl").read_text().splitlines()]
+    assert any(r.get("evento") == "interrompido" for r in logs)
+    assert not (out / "final").exists()
+
+
+def test_retomada_apos_interromper_conclui(tmp_path, monkeypatch):
+    """A história do botão parar→retomar: interrompe no step 0, `--resume` conclui os 4."""
+    import tokenizers
+
+    monkeypatch.setattr(tokenizers, "Tokenizer", FakeTokenizer)
+    _dataset(tmp_path / "data")
+    out = tmp_path / "run"
+
+    t.INTERROMPER = True
+    try:
+        res1 = t.run(t.parse_args(_run_args(tmp_path, out)))
+    finally:
+        t.INTERROMPER = False
+    assert res1["interrompido"] is True
+
+    res2 = t.run(t.parse_args(_run_args(tmp_path, out) + ["--resume"]))
+    assert res2["step"] == 4 and "interrompido" not in res2
+    assert (out / "final" / "tokenizer.json").exists()
