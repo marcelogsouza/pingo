@@ -285,7 +285,11 @@ def run(args: argparse.Namespace) -> dict:
 
     from tokenizers import Tokenizer
 
-    tokenizer = Tokenizer.from_file(str(args.tokenizer))
+    # treino-5: aceita tanto `tokenizer/<id>/` (registro do projeto) quanto um .json solto
+    tok_path = Path(args.tokenizer)
+    if tok_path.is_dir():
+        tok_path = tok_path / "tokenizer.json"
+    tokenizer = Tokenizer.from_file(str(tok_path))
     criados = ensure_chat_tokens(tokenizer)
     ids_chat = chat_token_ids(tokenizer)
     pad_id = tokenizer.token_to_id("<|pad|>")

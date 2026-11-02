@@ -175,6 +175,12 @@ def run(args: argparse.Namespace) -> dict:
 
     data = load_tokens(args.tokens_dir)
     cfg = make_config(args)
+    # invariante (treino-5): o vocab vem do `meta.json` dos tokens — que por sua vez é
+    # amarrado ao tokenizer que os gerou. Config digitado à mão nunca vence o meta.
+    vocab_meta = data.meta.get("vocab_size")
+    if vocab_meta and cfg.vocab_size != vocab_meta:
+        print(f"vocab_size ajustado pelo meta.json dos tokens: {cfg.vocab_size} → {vocab_meta}")
+        cfg.vocab_size = vocab_meta
     assert cfg.max_position_embeddings >= args.ctx, "ctx maior que o contexto do modelo"
     model = PingoLM(cfg).to(device)
     if args.compile:
