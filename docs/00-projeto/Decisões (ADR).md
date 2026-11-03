@@ -227,6 +227,31 @@ saiu já estava (ou foi adicionado) nas notas de SFT, [[Gotchas]], [[Decisões (
 
 ---
 
+## ADR-17 · QA do OSCAR com LLM: juíz professor, não varredor (2026-11-02)
+
+**Contexto.** Queremos um dataset de pré-treino melhor que o OSCAR filtrado (10,7M docs),
+julgado por um LLM local (Qwen 3.6 35B A3B). A conta: 1,8k tok/doc → ~21B tokens de entrada;
+mesmo a 1.000–4.000 tok/s de prompt (o servidor local mede 165 tok/s hoje) são **2,5–9 meses**
+de GPU exclusiva. GPU compartilhada com treino/serving; nada de run de meses.
+
+**Decisão.** O LLM **rotula uma amostra estratificada** (~4,8k docs: tercis de comprimento ×
+passou/reprovou nas heurísticas macias; ~11M tokens ≈ meia noite de 35B) e um **classificador
+CPU-puro** (TF-IDF hash + features das heurísticas + logística) destilado desses rótulos
+escoreia os 10,7M em minutos. O dataset novo (`data/oscar-qa/`) nasce no contrato JSONL do
+`/treino`. O juíz confere o id do modelo em `/v1/models` antes de rodar (trava de identidade) e
+grava cache idempotente chaveado pelo `norm_key` (blake2b do `process_data.py`).
+
+**Alternativas.** (a) Juíz em todos os docs — inviável pela conta acima. (b) Só heurísticas —
+já existe, é o filtro atual. (c) Embeddings + kNN — descartado: pesa na VRAM que é do treino e
+é mais lento que TF-IDF p/ essa tarefa.
+
+**Consequência.** Qualidade mediada por imitação: o classificador vale para **corte grosso e
+reranking**, não como garantia doc a doc. A rubrica do juíz é versionada (`v1`) e a planilha de
+discordância juíz×heurística (~200 docs) é parte do processo, não opcional.
+[[QA do dataset com LLM]] tem a corrente completa.
+
+---
+
 ## Ver também
 
 - [[Visão e filosofia]] — o pano de fundo

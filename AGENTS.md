@@ -41,8 +41,10 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verd
   `docs/07-sft/Run do SFT-120M.md`.
 - O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
-- Próximos, em `PLAN.md`: SFT-5 (opcional, instruções gerais/replay de texto) e Passo 8
-  (**350M — suspenso**).
+- Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (desenho fechado 2026-11-03;
+  juíz Qwen 3.6 35B rotula amostra, classificador destilado escoreia os 10,7M →
+  `data/oscar-qa/`; a corrente está em `docs/01-dados/QA do dataset com LLM.md`), SFT-5
+  (opcional, instruções gerais/replay de texto) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 
