@@ -549,7 +549,7 @@ function planoDoArgv(argv) {
           tokens_dir: iTok >= 0 ? argv[iTok + 1] : null};
 }
 async function progressoDoJob(j, nome) {
-  if (j && j.progresso) return j.progresso;          // a API já respondeu
+  if (j && j.progresso && "pct_sessao" in j.progresso) return j.progresso;  // backend novo
   const plano = planoDoArgv(j && j.argv);
   if (!plano) return null;
   let regs = [];
@@ -558,6 +558,7 @@ async function progressoDoJob(j, nome) {
   const treino = regs.filter(r => r.step != null && r.train_loss != null);
   if (!treino.length) return null;
   const ult = treino[treino.length - 1];
+  const inicio = [...regs].reverse().find(r => r.evento === "inicio");
   let taxa = null;                                   // steps/s, medidos no próprio log
   for (let i = treino.length - 1; i > 0; i--) {
     const a = treino[i - 1], b = treino[i];
@@ -573,9 +574,18 @@ async function progressoDoJob(j, nome) {
   const eta = (max_steps && taxa) ? Math.max(0, (max_steps - ult.step) / taxa)
     : (tokens_total && tokens_seen != null && toks_s) ? Math.max(0, (tokens_total - tokens_seen) / toks_s)
     : null;
-  return {step: ult.step, max_steps, pct: max_steps ? 100 * ult.step / max_steps : null,
-          tokens_seen, tokens_total, dataset_tokens: dataset,
-          epocas: (tokens_total && dataset) ? tokens_total / dataset : null,
+  // run retomado: "81% do plano" engana quem quer saber quanto falta AGORA — a sessão começou
+  // no step do `evento=inicio` (o `--resume`), então o % mostrado é o DESTA sessão.
+  const step_inicio = (inicio && inicio.step) || 0;
+  const pct_sessao = (max_steps && step_inicio < max_steps)
+    ? 100 * (ult.step - step_inicio) / (max_steps - step_inicio) : null;
+  const tps_s = plano.tokens_por_step;
+  const seen_s = (tps_s && step_inicio) ? (ult.step - step_inicio) * tps_s : tokens_seen;
+  const total_s = (tps_s && step_inicio && max_steps) ? (max_steps - step_inicio) * tps_s : tokens_total;
+  return {step: ult.step, max_steps, step_inicio, pct_sessao,
+          pct: max_steps ? 100 * ult.step / max_steps : null,
+          tokens_seen: seen_s, tokens_total: total_s, dataset_tokens: dataset,
+          epocas: (total_s && dataset) ? total_s / dataset : null,
           toks_s, decorrido_s: ult.t ?? null, eta_s: eta};
 }
 function mostrarProgresso(job, p) {
@@ -585,10 +595,12 @@ function mostrarProgresso(job, p) {
   if (!p || p.step == null) { caixa.hidden = true; topo.hidden = true; return; }
   caixa.hidden = false;
   const rodando = job && (job.state === "rodando" || job.state === "parando");
-  const pct = p.pct == null ? null : Math.min(100, p.pct);
+  const bruto = p.pct_sessao != null ? p.pct_sessao : p.pct;
+  const pct = bruto == null ? null : Math.min(100, bruto);
   topo.hidden = false;
   $("#progtop-fill").style.width = (pct ?? 0) + "%";
-  $("#progtop-txt").textContent = (pct == null ? "" : pct.toFixed(1) + "% · ") +
+  $("#progtop-txt").textContent = (pct == null ? "" : (p.step_inicio ? "sessão " : "") +
+      pct.toFixed(1) + "% · ") +
     `step ${inteiro(p.step)}${p.max_steps ? "/" + inteiro(p.max_steps) : ""}` +
     (p.eta_s != null ? ` · ${rodando ? "restam" : "parou faltando"} ${dur(p.eta_s)}` : "");
   $("#prog-nome").innerHTML = (job ? job.titulo : "run") +
@@ -598,6 +610,8 @@ function mostrarProgresso(job, p) {
   $("#prog .barra").classList.toggle("parado", !rodando);
   const linha = [];
   linha.push(`<span>step <b>${inteiro(p.step)}</b>${p.max_steps ? " / " + inteiro(p.max_steps) : ""}</span>`);
+  if (p.step_inicio) linha.push(`<span>sessão desde <b>${inteiro(p.step_inicio)}</b>` +
+    (p.pct != null ? ` (${p.pct.toFixed(0)}% do plano)` : "") + `</span>`);
   if (p.tokens_seen != null) linha.push(`<span>tokens <b>${fmt(p.tokens_seen)}</b>` +
     (p.tokens_total ? " / " + fmt(p.tokens_total) : "") + `</span>`);
   if (p.dataset_tokens) linha.push(`<span>dataset <b>${fmt(p.dataset_tokens)}</b>` +

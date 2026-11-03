@@ -194,6 +194,36 @@ def test_progresso_do_run_diz_quanto_falta(ambiente):
     assert p2["step"] == 5 and p2["pct"] is None and p2["eta_s"] is None
 
 
+def test_progresso_de_run_retomado_conta_a_sessao(ambiente):
+    """`--resume` num plano absoluto (5.248 → 6.488): o % do plano diria 81%, mas quem quer
+    saber quanto falta precisa da SESSÃO. Tokens/épocas também são da sessão — somar o que o
+    checkpoint já viu misturaria corpora diferentes."""
+    raiz, c = ambiente["raiz"], ambiente["client"]
+    tok = raiz / "data" / "tokens" / "tinytok2"
+    tok.mkdir(parents=True)
+    (tok / "meta.json").write_text(json.dumps({"train_tokens": 650_000_000, "vocab_size": 64}))
+    run = raiz / "runs" / "retomado"
+    run.mkdir()
+    (run / "log.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"step": 5248, "t": 0.0, "evento": "inicio", "max_steps": 6488,
+         "tokens_por_step": 524_288, "tokens_dir": str(tok), "train_tokens": 650_000_000},
+        {"step": 5260, "t": 60.0, "train_loss": 3.0, "toks_s": 100_000,
+         "tokens_seen": 2_757_754_880},
+        {"step": 5280, "t": 160.0, "train_loss": 2.9, "toks_s": 100_000,
+         "tokens_seen": 2_768_240_640},
+    ]) + "\n")
+
+    p = c.get("/api/treino/runs/retomado").get_json()["progresso"]
+    assert p["step_inicio"] == 5248 and p["max_steps"] == 6488
+    assert abs(p["pct"] - 81.38) < 0.01                 # do plano absoluto
+    assert abs(p["pct_sessao"] - 100 * 32 / 1240) < 1e-6    # desta sessão: 2,6%
+    assert p["tokens_seen"] == 32 * 524_288             # só o que a sessão andou
+    assert p["tokens_total"] == 1240 * 524_288          # o que falta a sessão inteira
+    assert abs(p["epocas"] - 1.0) < 1e-3                # ~1 passada no corpus, não 5,2
+    # 20 steps em 100 s = 0,2 step/s → 1.208 restantes = 6.040 s
+    assert abs(p["eta_s"] - 6040.0) < 1.0
+
+
 def test_pretreino_recusa_nome_ruim_run_protegido_e_out_ocupado(ambiente):
     c, tokens = ambiente["client"], ambiente["tokens_dir"]()
     payloads = [

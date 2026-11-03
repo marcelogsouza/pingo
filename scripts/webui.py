@@ -177,7 +177,20 @@ def _progresso(out: Path, argv: list[str] | None = None, tokens_dir: str | None 
         except (OSError, json.JSONDecodeError):
             dataset = None
 
+    # run retomado: o plano absoluto (max_steps) inclui o que já estava no checkpoint, e
+    # "81% do plano" engana quem quer saber quanto falta AGORA. A sessão começa em `inicio.step`.
+    step_inicio = (inicio or {}).get("step") or 0
+    restantes_sessao = (max_steps - step_inicio) if (max_steps and step_inicio < max_steps) else None
+    pct_sessao = (100.0 * (step - step_inicio) / restantes_sessao) if restantes_sessao else None
+
+    # Run retomado: contar tokens/épocas pelo plano ABSOLUTO mistura corpora (o `pt-120m-wiki`
+    # fez 2,75B tokens no OSCAR antes de tocar a wiki). A régua honesta é a sessão.
+    if step_inicio and tps:
+        tokens_seen = (step - step_inicio) * tps
+        tokens_total = restantes_sessao * tps if restantes_sessao else None
+
     return {"step": step, "max_steps": max_steps,
+            "step_inicio": step_inicio, "pct_sessao": pct_sessao,
             "pct": (100.0 * step / max_steps) if max_steps else None,
             "tokens_seen": tokens_seen, "tokens_total": tokens_total,
             "dataset_tokens": dataset,
