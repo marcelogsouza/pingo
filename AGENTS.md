@@ -45,6 +45,10 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verd
   juíz Qwen 3.6 35B rotula amostra, classificador destilado escoreia os 10,7M →
   `data/oscar-qa/`; a corrente está em `docs/01-dados/QA do dataset com LLM.md`), SFT-5
   (opcional, instruções gerais/replay de texto) e Passo 8 (**350M — suspenso**).
+- **Qualidade do OSCAR filtrado é pior do que parece** (medido 2026-11-03, amostra 3k docs
+  aprovados): ~45% têm raspa de web detectável por regex (boilerplate 34%, cookie 11%, JS,
+  wrapper EN) e os "limpos" incluem marketing/página-índice indetectável — por isso o
+  Passo 14 começa pelo pente-fino determinístico (qa-llm-0) e o juíz fica p/ substância.
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 

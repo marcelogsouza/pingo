@@ -20,6 +20,28 @@ um **modelo de linguagem julga a qualidade** — e o resultado vira um **dataset
 > Por isso o juíz é **professor, não varredor**: ele rotula amostra, um classificador barato
 > escoreia o corpus inteiro.
 
+## Medições de calibração (2026-11-03)
+
+Amostra aleatória de **3.000 docs que PASSARAM no filtro atual** (10 shards, seed 7),
+varrida por regex de "marcas de raspa de web" (conservadoras = piso):
+
+| marca | % |
+|---|---|
+| boilerplate de site (nav/privacidade/newsletter/inscreva-se) | 34,4 |
+| texto de cookie | 11,1 |
+| URL nua | 9,3 |
+| rabo truncado `…` | 5,5 |
+| JS vazado (`$(…`, `function(`, `<script`) | 0,9 |
+| wrapper em inglês (Issuu e afins) | 0,6 |
+| **≥2 marcas juntas** | **15,2** |
+| nenhuma marca | 54,6 |
+
+Consequência de desenho: **pente-fino determinístico antes do juíz** — regex de raspa +
+heurísticas novas cortam ~40% do corpus de graça; o LLM (caro) fica para a substância
+(marketing bem-escrito e página-índice não deixam nenhuma marca regex — vistos na amostra
+de 6 docs do mesmo dia). A planilha de discordância do qa-llm-2 deve incluir esses dois
+estilos como casos-alvo.
+
 ## O juiz
 
 - **Modelo**: Qwen 3.6 35B A3B (`~/llm_serving_scripts/llama_qwen3_6_35b_a3b_q4_k_m_mtp.sh`),
