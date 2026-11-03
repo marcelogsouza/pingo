@@ -55,6 +55,20 @@ e **aborta** se o val sair vazio. → [[Dataset Wikipedia PT]]
 do próprio `bash -c`, então o laço de espera nunca termina (dois timeouts de 10 min). Use
 `pgrep -f "[p]repare_tokens"` (colchete) ou `ps aux | grep "[p]repare"`.
 
+**Rodar a suíte matava o treino em andamento** (2026-11-03: o run da wiki morreu no step 74, com
+`rc 130` e o evento `interrompido` no log, no minuto em que o `pytest` rodou). Causa: um teste
+chama `create_app()` **sem `jobs=`**; o default é `JobRunner()` no `runs/jobs.json` real, e o
+`__init__` **caça órfãos** — SIGTERM no pid registrado como `rodando`. Duas travas agora:
+(a) a caça só roda quando `sys.argv` é a webui de verdade (`JobRunner(caçar=...)` para forçar);
+(b) `_é_do_projeto(pid)` confere o `/proc/<pid>/cmdline` e só mata `scripts/{train,train_sft,
+gen_sft,prepare_tokens,train_tokenizer}.py`. Os testes da WebUI injetam um runner de tmp.
+→ [[Interface de treino]]
+
+**Reiniciar a webui no meio de um treino mata o treino** (e é por desenho: é o que impede
+treino fantasma na GPU). Consequência prática: conserto de backend **não entra em produção**
+durante um run — planeje a mudança de front (arquivo servido do disco, vale no reload) ou
+espere o run acabar.
+
 ---
 
 ## Tokenizer

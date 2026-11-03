@@ -41,7 +41,11 @@ resolvem sem o peso de um stream por aba aberta).
   restart da webui.
 - **caça ao órfão no boot**: se o servidor morreu com um filho vivo, o runner SIGTERM o pid
   registrado e fecha o registro (`motivo: "webui reiniciou — órfão encerrado"`). Nenhum treino
-  fantasma segurando a GPU depois de um Ctrl+C no servidor.
+  fantasma segurando a GPU depois de um Ctrl+C no servidor. **Duas travas de segurança**
+  (2026-11-03, depois de a suíte matar um run vivo): a caça só roda no processo da webui
+  (`sys.argv` termina em `webui.py`; `JobRunner(caçar=True)` força nos testes) e só mata pid
+  cujo `/proc/<pid>/cmdline` é um script do projeto — pid reciclado fecha o registro sem
+  SIGTERM.
 - **saída** em anel de 400 linhas + `log_records()` lendo o `log.jsonl` do `--out` (tolerante a
   linha escrita pela metade entre flushes).
 - **mutex com o chat**: `Server._jobs` é injetado no `create_app`; com job rodando,

@@ -25,7 +25,7 @@ KV cache) está **completo** (2026-11-01): conta, números e contrato das rotas 
 `docs/07-sft/Modo didático.md`. **Interface de treino em `/treino` concluída** (Passo 13,
 treino-1…5, 2026-11-02): QA de dataset, tokenização (vocab por experimento `tokenizer/<id>/`),
 pré-treino/SFT com fila de 1 job, parar (SIGTERM→ckpt) e retomar, curva de loss e HW — o
-contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verdes**.
+contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **232 testes verdes**.
 
 **Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
 
