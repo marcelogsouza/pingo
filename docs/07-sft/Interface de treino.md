@@ -54,7 +54,13 @@ resolvem sem o peso de um stream por aba aberta).
 
 ## Progresso do run (quanto falta)
 
-Desde 2026-11-03 a aba ③ mostra **quanto falta** de um run, não só a curva de loss:
+Desde 2026-11-03 a aba ③ mostra **quanto falta** de um run, não só a curva de loss — e a
+**barra de cima** (visível em qualquer aba) ganhou um espelho compacto, porque é para lá que a
+pessoa olha enquanto o treino roda:
+
+```
+12,9% · step 160/1.240 · restam 1h 33m          ← barra de cima (todas as abas)
+```
 
 ```
 pré-treino wiki-120m                                     4,0%

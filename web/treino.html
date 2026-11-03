@@ -151,6 +151,10 @@
   <div id="bar">
     <span><span class="dot" id="dot"></span> <b id="jobnome">fila livre</b></span>
     <span id="jobdet"></span>
+    <span id="progtop" hidden>
+      <span class="barra mini"><i id="progtop-fill"></i></span>
+      <span id="progtop-txt"></span>
+    </span>
     <button class="btn stop" id="parar" style="display:none">⏹ parar</button>
     <span class="hw" id="hw"></span>
   </div>
@@ -576,10 +580,17 @@ async function progressoDoJob(j, nome) {
 }
 function mostrarProgresso(job, p) {
   const caixa = $("#prog");
-  if (!p || p.step == null) { caixa.hidden = true; return; }
+  // espelho compacto na barra de cima: é para lá que a pessoa olha enquanto treina
+  const topo = $("#progtop");
+  if (!p || p.step == null) { caixa.hidden = true; topo.hidden = true; return; }
   caixa.hidden = false;
   const rodando = job && (job.state === "rodando" || job.state === "parando");
   const pct = p.pct == null ? null : Math.min(100, p.pct);
+  topo.hidden = false;
+  $("#progtop-fill").style.width = (pct ?? 0) + "%";
+  $("#progtop-txt").textContent = (pct == null ? "" : pct.toFixed(1) + "% · ") +
+    `step ${inteiro(p.step)}${p.max_steps ? "/" + inteiro(p.max_steps) : ""}` +
+    (p.eta_s != null ? ` · ${rodando ? "restam" : "parou faltando"} ${dur(p.eta_s)}` : "");
   $("#prog-nome").innerHTML = (job ? job.titulo : "run") +
     (rodando ? "" : ` <span class="tag">${job ? job.state : "parado"}</span>`);
   $("#prog-pct").innerHTML = pct == null ? "" : `<b>${pct.toFixed(1)}%</b>`;
