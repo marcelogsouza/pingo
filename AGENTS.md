@@ -43,9 +43,10 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verd
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
 - **Corpus wiki pronto (2026-11-03)**: `data/wiki/pt.jsonl` (836.266 docs) + `pt-val.jsonl`
   (17.093) e os tokens em `data/tokens/wiki-16k/` — **650.248.473 train / 13.117.734 val**,
-  vocab 16.384 congelado (embeddings e `runs/pt-120m` compatíveis). 1 época = **1.265 steps
+  vocab 16.384 congelado (embeddings e `runs/pt-120m` compatíveis). 1 época = **1.240 steps
   ≈ 1,8 h** de GPU. Régua `--short-line-ratio 0.9` (0.6 do OSCAR mataria 67% da wiki); números
-  em `docs/01-dados/Dataset Wikipedia PT.md`. **Falta só disparar o pré-treino** (do zero e/ou
+  em `docs/01-dados/Dataset Wikipedia PT.md`. Baseline cruzado do modelo atual: ppl **13,75**
+  no val OSCAR vs **24,72** no val wiki (mesmo harness, CPU). **Falta só disparar o pré-treino** (do zero e/ou
   `--resume` do pt-120m) — combinar antes: o Strata segura 31,4 GB dos 32,6.
 - Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (desenho fechado 2026-11-03;
   juíz Qwen 3.6 35B rotula amostra, classificador destilado escoreia os 10,7M →

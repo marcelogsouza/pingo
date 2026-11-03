@@ -89,14 +89,48 @@ OSCAR na wiki, além de partir do zero.
 O run do Pingo-120M consumiu **2,75B tokens em 5.248 steps** (524.288 tokens/step). A wiki
 inteira tem **663M tokens = 24% disso**:
 
-- 1 época de wiki = **1.265 steps** (~1,8 h na RTX, no mesmo batch do run atual);
-- 2 épocas = 2.530 steps (~3,6 h) — e aí a comparação com o run OSCAR é "mesmo nº de steps,
+- 1 época de wiki = **1.240 steps** (650M de train ÷ 524.288 tokens/step; ~1,8 h na RTX, no
+  mesmo batch do run atual);
+- 2 épocas = 2.480 steps (~3,6 h) — e aí a comparação com o run OSCAR é "mesmo nº de steps,
   corpus 4× menor e limpo".
 
 Dois experimentos valem a pena (mesmo vocab, `runs/pt-120m` intocado): **do zero** na wiki e
 **continuando** o checkpoint do OSCAR na wiki (`--resume` copiado para `runs/pt-120m-wiki`).
 Avaliação: ppl no `val-0000.bin` da wiki + a régua de sempre (`scripts/eval_sft.py`).
 **Exige GPU** — o Strata segura 31,4 GB dos 32,6; combinar antes de disparar.
+
+Disparados pelo `/treino` (fila de 1 job — um depois do outro). Preparado em 2026-11-03:
+`runs/pt-120m-wiki/ckpt.pt` é cópia do `runs/pt-120m/ckpt.pt` (step 5.248); o run (b) precisa de
+`max_steps` explícito porque o default é 1 época (1.240 < 5.248 ⇒ o `while step < max_steps`
+nem entraria):
+
+```bash
+# (a) do zero: 1 época = 1.240 steps (650M ÷ 524.288 tokens-por-step), ~1,8 h
+curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' \
+  -d '{"out":"wiki-120m","tokens_dir":"data/tokens/wiki-16k","epochs":1}'
+# (b) continua o OSCAR na wiki: 5.248 + 1.240 = 6.488 steps, ~1,8 h
+curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' \
+  -d '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488}'
+```
+
+Os dois com a receita do run OSCAR (bs 16 × ctx 2048 × accum 16 = 524.288 tokens/step, lr 3e-4
+→ min-lr 3e-5, warmup 400, wd 0.1). No (b), no passo 5.248 esse cronograma está em ~5,9e-5 e
+decai a 3e-5: adaptação, não re-treino.
+
+## Baseline cruzado (2026-11-03, CPU, antes de qualquer re-treino)
+
+O Pingo-120M do OSCAR (`runs/pt-120m/best.pt`, step 4.872) avaliado no MESMO harness
+(`train.evaluate`, batch 4 × ctx 1024 × 8 iters, rng fixo) nos dois val:
+
+| val | val loss | ppl |
+|---|---|---|
+| OSCAR (`data/tokens`, 6 shards) | 2,621 | **13,75** |
+| **wiki (`data/tokens/wiki-16k`)** | 3,207 | **24,72** |
+
+O estilo enciclopédico é **fora de distribuição** para o modelo do OSCAR — 1,8× pior ppl no
+corpus que agora queremos explorar. (Não comparar com o 11,67 do relatório do run: lá é
+ctx 2048 / mais iters; aqui a comparação é entre corpora, mesmo harness.) É o número-alvo do
+**wiki-4**: o run da wiki deve derrubar esse 24,72, e o `--resume` deve fazê-lo rápido.
 
 ## Ver também
 
