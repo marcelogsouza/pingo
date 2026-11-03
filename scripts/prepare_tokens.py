@@ -10,6 +10,8 @@ atingir `--train-tokens`. `meta.json` registra contagens e proveniência.
 treino-4: `--input jsonl` binariza direto um JSONL aprovado pela QA (contrato
 `content`) — é o caminho da aba Tokenização do /treino. O split val/train é o MESMO
 hash do `process_data.py` (`val-pct`% por doc), então um doc nunca troca de lado.
+Exceção: se já existe `<stem>-val.jsonl` ao lado (o `ingest_wikipedia.py` fatia na origem),
+esse arquivo É o val e o train não é re-fatiado — `--val-jsonl` força isso. Val vazio = erro.
 
 Uso:
   uv run python scripts/prepare_tokens.py                    # completo (~2,75B train + val todo)
@@ -37,8 +39,8 @@ from process_data import norm_key  # o MESMO hash de split/dedup do filtro OSCAR
 from train_tokenizer import iter_docs  # reaproveita o gerador por row-group (RAM limitada)
 
 
-def iter_docs_jsonl(path: Path, split: str, val_pct: int) -> Iterator[str]:
-    """Gera o `content` do JSONL que passou na QA; split determinístico pelo hash do doc."""
+def _iter_content(path: Path) -> Iterator[str]:
+    """Lê o JSONL da QA (uma linha por doc, campo `content`); pula linha fora do contrato."""
     n_pulados = 0
     with Path(path).open(encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -51,12 +53,27 @@ def iter_docs_jsonl(path: Path, split: str, val_pct: int) -> Iterator[str]:
             except (json.JSONDecodeError, KeyError, AssertionError):
                 n_pulados += 1          # a QA já contou; aqui só não binariza
                 continue
-            key = norm_key(content)
-            lado = "val" if int.from_bytes(key, "big") % 100 < val_pct else "train"
-            if lado == split:
-                yield content
+            yield content
     if n_pulados:
         print(f"  jsonl: {n_pulados} linha(s) fora do contrato puladas", flush=True)
+
+
+def iter_docs_jsonl(path: Path, split: str, val_pct: int,
+                    val_jsonl: Path | None = None) -> Iterator[str]:
+    """Gera o `content` do JSONL que passou na QA; split determinístico pelo hash do doc.
+
+    `val_jsonl`: corpus **já fatiado** pelo ingest (`<stem>.jsonl` train + `<stem>-val.jsonl`,
+    é o caso do `ingest_wikipedia.py`) — cada arquivo é um lado só. Aqui NÃO se re-fatia por
+    hash: um JSONL train-only já excluiu os docs do val, então `hash % 100 < val_pct` não
+    acharia nenhum doc (o val ficou vazio no wiki, 2026-11-03 — a guarda em `main()` pega).
+    """
+    if val_jsonl is not None:
+        yield from _iter_content(val_jsonl if split == "val" else path)
+        return
+    for content in _iter_content(path):
+        lado = "val" if int.from_bytes(norm_key(content), "big") % 100 < val_pct else "train"
+        if lado == split:
+            yield content
 
 
 class BinShards:
@@ -130,6 +147,9 @@ def main(argv=None) -> None:
                     help="parquet = esteira OSCAR (process_data.py); jsonl = QA aprovado (treino-4)")
     ap.add_argument("--jsonl", type=Path, default=None, help="dataset JSONL com `content` (--input jsonl)")
     ap.add_argument("--val-pct", type=int, default=2, help="%% de docs p/ val por hash (jsonl)")
+    ap.add_argument("--val-jsonl", type=Path, default=None,
+                    help="JSONL de val já separado (default: <stem>-val.jsonl ao lado do --jsonl, "
+                         "se existir — é o que o ingest_wikipedia.py escreve)")
     ap.add_argument("--raw-dir", type=Path, default=ROOT / "data" / "raw")
     ap.add_argument("--tokenizer", type=Path, default=ROOT / "tokenizer")
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "tokens")
@@ -150,12 +170,21 @@ def main(argv=None) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     if args.input == "jsonl":
+        val_jsonl = args.val_jsonl
+        if val_jsonl is None:
+            irma = args.jsonl.with_name(args.jsonl.stem + "-val.jsonl")
+            if irma.is_file():          # o ingest já fatiou train/val — não re-fatiar por hash
+                val_jsonl = irma
+                print(f"  val: {val_jsonl} (split já feito pelo ingest)", flush=True)
+
         def docs(split: str) -> Iterator[str]:
-            return iter_docs_jsonl(args.jsonl, split, args.val_pct)
+            return iter_docs_jsonl(args.jsonl, split, args.val_pct, val_jsonl)
         fonte = {"input": "jsonl",
                  "jsonl": str(args.jsonl) if not args.jsonl.is_relative_to(ROOT)
                  else str(args.jsonl.relative_to(ROOT)),
                  "val_pct": args.val_pct}
+        if val_jsonl is not None:
+            fonte["val_jsonl"] = str(val_jsonl)
     else:
         def docs(split: str) -> Iterator[str]:
             return iter_docs(args.raw_dir, split, args.seed)
@@ -174,6 +203,9 @@ def main(argv=None) -> None:
     val_stats = binarize(tok, docs("val"), val_w,
                          args.val_tokens or 2**62, args.flush_chars, args.n_process)
     n_val_shards, n_val_tokens = val_w.close()
+    if val_stats["docs"] == 0:          # split quebrado = eval mentiroso; melhor parar aqui
+        sys.exit("split val vazio — o JSONL já vem fatiado? passe --val-jsonl; senão revise "
+                 "--val-pct (o treino precisa de val para o eval)")
 
     meta = {
         "tokenizer": str(args.tokenizer.relative_to(ROOT)) if args.tokenizer.is_relative_to(ROOT) else str(args.tokenizer),

@@ -43,7 +43,8 @@ def _percentil(ordenado: list[int], p: float) -> int:
     return ordenado[min(len(ordenado) - 1, int(p * len(ordenado)))]
 
 
-def analisar(path: Path, sample: int = MAX_AMOSTRAS, seed: int = 13) -> dict:
+def analisar(path: Path, sample: int = MAX_AMOSTRAS, seed: int = 13,
+             short_line_ratio: float = SHORT_LINE_RATIO) -> dict:
     """Varre o JSONL (streaming, memória O(n_docs) só p/ hashes) e devolve o relatório."""
     path = Path(path)
     if not path.is_file():
@@ -103,7 +104,7 @@ def analisar(path: Path, sample: int = MAX_AMOSTRAS, seed: int = 13) -> dict:
             if n < MIN_CHARS:
                 curtos += 1
             linhas = content.split("\n")
-            if sum(1 for ln in linhas if len(ln.strip()) < SHORT_LINE_CHARS) > SHORT_LINE_RATIO * len(linhas):
+            if sum(1 for ln in linhas if len(ln.strip()) < SHORT_LINE_CHARS) > short_line_ratio * len(linhas):
                 muitas_linhas_curtas += 1
             if sum(content.count(c) for c in SYMBOLS) > SYMBOL_RATIO * n:
                 muitos_simbolos += 1
@@ -177,11 +178,15 @@ def main() -> None:
     ap.add_argument("arquivo", type=Path)
     ap.add_argument("--json", action="store_true", help="devolve o relatório cru (a UI usa assim)")
     ap.add_argument("--sample", type=int, default=MAX_AMOSTRAS)
+    ap.add_argument("--short-line-ratio", type=float, default=SHORT_LINE_RATIO,
+                    help="0.9 p/ wiki (títulos de seção são linhas curtas legítimas); 0.6 é a "
+                         "régua do OSCAR")
     ap.add_argument("--seed", type=int, default=13)
     args = ap.parse_args()
 
     try:
-        rel = analisar(args.arquivo, sample=args.sample, seed=args.seed)
+        rel = analisar(args.arquivo, sample=args.sample, seed=args.seed,
+                       short_line_ratio=args.short_line_ratio)
     except FileNotFoundError:
         sys.exit(f"arquivo não encontrado: {args.arquivo}")
 

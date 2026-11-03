@@ -42,6 +42,19 @@ row group, nunca carregar parquet inteiro. → [[Infra e GPU]]
 **Disco:** `data/` = ~69 GB. Os `.jsonl.zst` (40 GB) são apagáveis com segurança depois da
 tokenização; os `.bin` e os parquets **não** (o SFT ainda lê os parquets).
 
+**JSONL já fatiado + split por hash = val vazio** (2026-11-03). O `ingest_wikipedia.py` escreve
+`x.jsonl` (train) **e** `x-val.jsonl` (val). Passar só o `x.jsonl` ao `prepare_tokens --input jsonl`
+re-aplica `hash % 100 < val_pct` num arquivo que **já excluiu** essas classes → `val_tokens: 0`
+no `meta.json`, e o treino segue com eval mentiroso. O sintoma parece azar criptográfico ("0 hits
+em 50.000 docs, mas a banda 2–4 está cheia") e come uma tarde: conferimos o `blake2b(digest_size=8)`
+contra o `b2sum -l 64` do coreutils (idênticos, 3.000/3.000) e ele dá 2,32% no OSCAR — que nunca
+tinha sido fatiado antes. Hoje o `prepare_tokens` detecta o irmão `-val.jsonl` (`--val-jsonl` força)
+e **aborta** se o val sair vazio. → [[Dataset Wikipedia PT]]
+
+**`pgrep -f "prepare_tokens.py --input jsonl"` caça a si mesmo** — o padrão está na linha de comando
+do próprio `bash -c`, então o laço de espera nunca termina (dois timeouts de 10 min). Use
+`pgrep -f "[p]repare_tokens"` (colchete) ou `ps aux | grep "[p]repare"`.
+
 ---
 
 ## Tokenizer

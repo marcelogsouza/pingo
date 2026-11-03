@@ -175,6 +175,12 @@ pingo/
     - **qa-llm-3** — `scripts/gen_qa_dataset.py`: TF-IDF hash + features + logística (SGD, CPU, sem sklearn), 5-fold F1 vs. rótulos do juíz; escoreia o corpus; limiar escolhido na calibração; escreve `data/oscar-qa/` + meta. Critério: tokenizar o novo dataset no /treino e ver o val ppl do run comparar com o run OSCAR atual.
     - **depois** — replay ponderado (loader prioriza shards aprovados) só se o run com o corpus limpo justificar.
 
+14b. **Re-treino na Wikipedia PT** (pivô de 2026-11-03: "vamos utilizar o dataset em português do Wikipedia pra treinar novamente e ver no que dá. Depois voltamos ao OSCAR"). Corpus: `TucanoBR/wikipedia-PT` (HF, campo `text`, cc-by-sa-3.0, 1.103.446 artigos) — não o dump XML que o Passo 13 imaginava. Números e contratos em [[Dataset Wikipedia PT]].
+    - **wiki-1** — `scripts/ingest_wikipedia.py`: HF → `content` com as MESMAS réguas do OSCAR (`process_data.py`) + split por hash **na origem** (`pt.jsonl` train, `pt-val.jsonl` val). ✔ (2026-11-03; desvio: `--short-line-ratio` default **0,9** para wiki — a régua 0,6 do OSCAR retinha só 33% dos artigos, medido; `qa_dataset.py` ganhou a mesma flag)
+    - **wiki-2** — QA + binarização no tokenizer default 16.384 (vocab igual ⇒ embeddings/`runs/pt-120m` compatíveis). ✔ 836.266 docs train / 17.093 val → **650.248.473 + 13.117.734 tokens** em `data/tokens/wiki-16k/`. **Bug pego e consertado:** o `prepare_tokens` re-fatiava por hash um JSONL já fatiado ⇒ val vazio (o sintoma apontava para o hash, não para o pipeline); agora detecta o irmão `-val.jsonl` e **aborta** se o val sair vazio — teste na suíte.
+    - **wiki-3** — pré-treino na wiki pelo `/treino`: **(a)** do zero, 1 época = 1.265 steps (~1,8 h); **(b)** continuando o `runs/pt-120m` com `--resume` **copiado** para `runs/pt-120m-wiki` (nunca escrever no `pt-120m`). Critério: os dois disparados pela interface, com o Strata desligado antes (combinado com o usuário).
+    - **wiki-4** — comparar com números: ppl no val da wiki, a régua de sempre (`eval_sft.py`) e a amostra gerada a olho. Critério de aceite: dizer se **663M tokens limpos** batem os **2,75B tokens sujos** no português do Pingo — e aí decidir o híbrido com o OSCAR destilado do Passo 14.
+
 ## Decisões fechadas ✔
 
 - Porte Fase 1: **Pingo-120M** (12 camadas, d=896, 14 heads) — treina em ~6–10 h, escalável a 350M depois

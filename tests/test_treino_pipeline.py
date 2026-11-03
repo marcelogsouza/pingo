@@ -59,6 +59,62 @@ def _corpus(tmp_path: Path, n_docs: int = 80) -> Path:
     return p
 
 
+def test_corpus_ja_fatiado_val_jsonl_e_guarda(tmp_path, capsys):
+    """Ingest que fatia na origem (`<stem>.jsonl` + `<stem>-val.jsonl`) não pode ser re-fatiado
+    por hash: o train-only NÃO contém os docs do val, o val sairia vazio e o eval mentiria.
+    Foi o bug do wiki (2026-11-03): auto-detecção do `<stem>-val.jsonl` + guarda de val vazio."""
+    import hashlib  # para montar um train-only de verdade (todos com hash%100 ≥ 2)
+    from process_data import norm_key
+
+    rng = random.Random(11)
+    docs = []
+    i = 0
+    while len(docs) < 100:                     # só os que o hash chamaria de "train"
+        t = " ".join(rng.choice(FRASES) for _ in range(3)) + f" Documento {i}."
+        if int.from_bytes(norm_key(t), "big") % 100 >= 2:
+            docs.append(t)
+        i += 1
+    corpus = tmp_path / "pt.jsonl"
+    corpus.write_text("".join(json.dumps({"content": d}, ensure_ascii=False) + "\n" for d in docs),
+                      encoding="utf-8")
+    val_docs = [" ".join(rng.choice(FRASES) for _ in range(3)) + f" Val {j}." for j in range(20)]
+    (tmp_path / "pt-val.jsonl").write_text(
+        "".join(json.dumps({"content": d}, ensure_ascii=False) + "\n" for d in val_docs),
+        encoding="utf-8")
+
+    tok_dir = tmp_path / "tokenizer" / "exp-fatiado"
+    train_tokenizer.main(["--id", "exp-fatiado", "--out", str(tok_dir), "--vocab", "200",
+                          "--min-frequency", "1", "--sample-chars", "100_000",
+                          "--val-chars", "20_000", "--specials", ESPECIAIS, "--jsonl", str(corpus)])
+
+    tdir = tmp_path / "tokens" / "fatiado"
+    prepare_tokens.main(["--input", "jsonl", "--jsonl", str(corpus),
+                         "--tokenizer", str(tok_dir), "--out", str(tdir),
+                         "--val-pct", "2", "--shard-tokens", "500_000",
+                         "--flush-chars", "50_000", "--n-process", "1"])
+    meta = json.loads((tdir / "meta.json").read_text())
+    assert meta["val_jsonl"].endswith("pt-val.jsonl")     # auto-detetado, não re-fatiado
+    assert meta["val_stats"]["docs"] == 20 and meta["val_tokens"] > 0
+    assert meta["train_stats"]["docs"] == 100
+    assert "val: " in capsys.readouterr().out
+
+    # sem o arquivo do val, o train-only não produz val nenhum → para em vez de treinar às cegas
+    (tmp_path / "pt-val.jsonl").rename(tmp_path / "pt-val.jsonl.off")
+    with pytest.raises(SystemExit):
+        prepare_tokens.main(["--input", "jsonl", "--jsonl", str(corpus),
+                             "--tokenizer", str(tok_dir), "--out", str(tmp_path / "tokens" / "ruim"),
+                             "--val-pct", "2", "--shard-tokens", "500_000",
+                             "--flush-chars", "50_000", "--n-process", "1"])
+
+
+def test_iter_docs_jsonl_ja_fatiado_devolve_o_val_inteiro(tmp_path):
+    train, val = tmp_path / "a.jsonl", tmp_path / "a-val.jsonl"
+    train.write_text('{"content": "treino um"}\n{"content": "treino dois"}\n', encoding="utf-8")
+    val.write_text('{"content": "val do qual"}\n{"content": "val do hash"}\n', encoding="utf-8")
+    assert list(prepare_tokens.iter_docs_jsonl(train, "val", 2, val)) == ["val do qual", "val do hash"]
+    assert list(prepare_tokens.iter_docs_jsonl(train, "train", 2, val)) == ["treino um", "treino dois"]
+
+
 def test_corrente_completa_com_tokenizer_novo(tmp_path, capsys):
     corpus = _corpus(tmp_path)
     tok_dir = tmp_path / "tokenizer" / "exp-400"

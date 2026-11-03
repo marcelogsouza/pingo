@@ -41,6 +41,12 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verd
   `docs/07-sft/Run do SFT-120M.md`.
 - O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
   nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
+- **Corpus wiki pronto (2026-11-03)**: `data/wiki/pt.jsonl` (836.266 docs) + `pt-val.jsonl`
+  (17.093) e os tokens em `data/tokens/wiki-16k/` — **650.248.473 train / 13.117.734 val**,
+  vocab 16.384 congelado (embeddings e `runs/pt-120m` compatíveis). 1 época = **1.265 steps
+  ≈ 1,8 h** de GPU. Régua `--short-line-ratio 0.9` (0.6 do OSCAR mataria 67% da wiki); números
+  em `docs/01-dados/Dataset Wikipedia PT.md`. **Falta só disparar o pré-treino** (do zero e/ou
+  `--resume` do pt-120m) — combinar antes: o Strata segura 31,4 GB dos 32,6.
 - Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (desenho fechado 2026-11-03;
   juíz Qwen 3.6 35B rotula amostra, classificador destilado escoreia os 10,7M →
   `data/oscar-qa/`; a corrente está em `docs/01-dados/QA do dataset com LLM.md`), SFT-5
@@ -80,6 +86,9 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **227 testes verd
   trava. Não recriar um segundo filtro nem um segundo loop.
 - **Um escritor por saída.** Dois `gen_sft.py` no mesmo JSONL corrompem o arquivo; dois
   `train_sft.py` no mesmo `--out` idem. A WebUI também ocupa GPU: rode uma geração por vez.
+- **JSONL já fatiado não se re-fatia.** `data/wiki/pt.jsonl` é o lado **train**; o val é o irmão
+  `pt-val.jsonl`. O `prepare_tokens --input jsonl` detecta o irmão e **aborta** se o val sair
+  vazio — não contorne a guarda nem passe `--val-pct` esperando que ele divida de novo.
 - **Treino disparado é só pelo `JobRunner`** (`pingo/jobs.py` — o `/treino` e nada mais):
   fila de 1 job, `runs/jobs.json`, caça ao órfão no boot, e com job rodando o chat **não
   carrega modelo** (a VRAM é uma só). `runs/pt-120m` e o backup são protegidos por nome (403)
