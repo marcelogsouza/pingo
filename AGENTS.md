@@ -43,34 +43,27 @@ atual é **corpus** (wiki limpa × OSCAR sujo). Comandos por etapa em
   **13,75** no val OSCAR e **24,72** no val wiki — estilo enciclopédico é fora de distribuição
   para ele. É o número-alvo dos runs da wiki.
 
-### ⏳ Runs da wiki em andamento (retomar daqui)
+### ✅ Runs da wiki — concluídos (2026-11-03); tabela cruzada
 
-| run | o que é | estado em 2026-11-03 15:38 |
-|---|---|---|
-| **`runs/wiki-120m`** | do zero na wiki, 1.240 steps | ✅ **concluído** — val loss **2,878 / ppl 17,78** no val da wiki |
-| `runs/pt-120m-wiki` | `--resume` do ckpt do OSCAR na wiki, `max_steps` **6488** (5.248 + 1.240) | **rodando** (step 5.300, restam ~103 min, termina ~17:22) |
+| modelo | treino | val OSCAR | val wiki |
+|---|---|---|---|
+| `runs/pt-120m/final` | 2,75B sujos (OSCAR) | **12,27** | 23,98 |
+| `runs/wiki-120m/final` | 650M limpos, do zero | 59,19 | 16,63 |
+| **`runs/pt-120m-wiki/final`** | OSCAR → wiki (resume) | 18,66 | **13,49** |
 
-**O (a) já respondeu a pergunta da fase**: 650M tokens **limpos** de wiki dão ppl **17,78** no
-val da wiki, contra **21,7** do modelo treinado em 2,75B tokens **sujos** do OSCAR medido no
-mesmo harness (o `pt-120m` no step 5.250 do run (b) marca exatamente 3,0759 / 21,7). Ou seja:
-no domínio da wiki, o corpus limpo e 4× menor ganha. O (b) dirá se o OSCAR ainda serve de
-inicialização (o número a bater é 17,78).
+`uv run python scripts/eval_ppl.py --model <final…> --tokens data/tokens data/tokens/wiki-16k`
+(mesmo harness do treino; detalhe e curvas em `docs/01-dados/Dataset Wikipedia PT.md`).
 
-- **Ao voltar**: `curl -s localhost:8010/api/treino/status` → a barra do `/treino` diz step/%/ETA
-  **da sessão** (run retomado conta a partir do `--resume`, não do plano absoluto que mistura
-  corpora). O (b) terminando, o passo é o **wiki-4** (abaixo).
-  Se precisar disparar o (b) de novo, o comando é:
-  `curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' -d
-  '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488,"compile":true}'`
-  (o `ckpt.pt` do `pt-120m-wiki` é cópia do `pt-120m`; `runs/pt-120m` continua intocado).
-- **Avaliar (wiki-4)**: ppl no val da wiki + `eval_sft.py` nos dois runs contra os baselines
-  acima. O critério é dizer se **663M tokens limpos** batem os **2,75B sujos** no português —
-  e então decidir o híbrido com o OSCAR destilado do Passo 14. `PLAN.md` 14b tem os passos.
-- Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (juíz Qwen 3.6 35B rotula amostra,
-  classificador CPU escoreia os 10,7M → `data/oscar-qa/`; desenho em
-  `docs/01-dados/QA do dataset com LLM.md`; ~45% do OSCAR aprovado tem raspa de web detectável,
-  então o passo começa pelo pente-fino qa-llm-0), SFT-5 (instruções gerais + texto cru; a
-  fraqueza atual é `recusa_ok` ~0,5) e Passo 8 (**350M — suspenso**).
+- **Decisão de corpus: híbrido.** Wiki limpa ganha no domínio dela com 4× menos tokens
+  (16,63 × 23,98), mas wiki-puro do zero sacrifica o português geral (59,19 no val do OSCAR);
+  o OSCAR → wiki é o melhor dos dois mundos (13,49 na wiki, 18,66 no OSCAR). O caminho é
+  **limpar o OSCAR (Passo 14)** com a wiki como componente de qualidade/replay — não trocar
+  escala por limpeza.
+- O run (a) fechou em 1h41 (1.240 steps, 101k tok/s com `--compile`) e o (b) em 1h47
+  (5.248 → 6.488, ganho de 21,67 → 13,49 na wiki). Ambos com `final/` gravado.
+- **Próximo passo**: Passo 14 — qa-llm-0 (`scripts/scan_raspa.py`, pente-fino determinístico,
+  só CPU, pode começar já) e depois qa-llm-1…3 quando o servidor do 35B estiver de pé.
+  SFT-5 continua opcional (a fraqueza é `recusa_ok` ~0,5).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 

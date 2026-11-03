@@ -149,6 +149,47 @@ OSCAR medido no val da wiki, no arranque do run (b), dá **3,0759 / 21,7**. O ru
 hipótese do corpus limpo se sustenta: o problema do Pingo não era falta de tokens, era o
 OSCAR.
 
+## Resultado do wiki-4 — a tabela cruzada (2026-11-03)
+
+O que decide o corpus não é "quem tem ppl menor", é **quem tem ppl menor e não perde o resto**.
+Os três modelos (pesos finais) nos dois val, mesmo harness — `scripts/eval_ppl.py`, que é o
+`train.evaluate` do treino (bs 16 × ctx 2048 × 20 iters, rng fixo):
+
+| modelo | corpus de treino | val OSCAR | val wiki |
+|---|---|---|---|
+| `runs/pt-120m/final` | 2,75B tokens **sujos** (OSCAR) | **12,27** | 23,98 |
+| `runs/wiki-120m/final` | 650M tokens **limpos**, do zero | 59,19 | 16,63 |
+| **`runs/pt-120m-wiki/final`** | OSCAR **→** wiki (resume) | 18,66 | **13,49** |
+
+```bash
+uv run python scripts/eval_ppl.py --model runs/pt-120m/final runs/wiki-120m/final \
+    runs/pt-120m-wiki/final --tokens data/tokens data/tokens/wiki-16k
+```
+
+Leituras que importam:
+
+1. **Wiki limpa ganha no domínio dela, com 4× menos tokens**: 16,63 contra 23,98 do OSCAR
+   (o do zero). A hipótese "o problema era o corpus, não o tamanho" se sustenta.
+2. **Mas wiki-puro do zero sacrifica o português geral**: 59,19 no val do OSCAR (2,4× pior) —
+   650M tokens de enciclopédia não substituem 2,75B de texto variado. É o teto do corpus
+   pequeno, não do corpus limpo.
+3. **O híbrido (OSCAR → wiki) é o melhor dos dois**: melhor ppl na wiki (**13,49**) e o OSCAR
+   ainda saudável (18,66, contra 12,27 originais — esqueceu um pouco, nada catastrófico).
+   Em 1.240 steps de adaptação a 5,9e-5 → 3e-5 ele ganhou **43% de ppl na wiki**
+   (21,67 → 13,49) sem perder o domínio geral.
+
+**Decisão de corpus**: o caminho é **híbrido** — manter o OSCAR como base de escala e limpar
+qualidade (Passo 14: qa-llm-0 → juíz → classificador), com a wiki entrando como componente
+de alta qualidade/replay. Treinar só na wiki exigiria ~5× mais tokens de wiki (dumps antigos)
+para pagar o que se perde no texto geral.
+
+Curvas (val a cada 250 steps, eval do próprio treino):
+
+| run | 250 | 500 | 750 | 1.000 | 1.250 | 5.500 | 5.750 | 6.000 | 6.250 |
+|---|---|---|---|---|---|---|---|---|---|
+| `wiki-120m` (ppl) | 102,6 | 34,2 | 21,3 | 17,8 | — | — | — | — | — |
+| `pt-120m-wiki` (ppl) | — | — | — | — | — | 15,50 | 14,60 | 14,08 | 13,75 |
+
 ## Baseline cruzado (2026-11-03, CPU, antes de qualquer re-treino)
 
 O Pingo-120M do OSCAR (`runs/pt-120m/best.pt`, step 4.872) avaliado no MESMO harness
