@@ -85,17 +85,44 @@ def test_job_que_falha_fica_falhou_com_rc(tmp_path):
 
 
 def test_boot_caça_o_órfão_e_reescreve_o_registro(tmp_path):
-    órfão = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    # o órfão de verdade é um `scripts/train.py` nosso: é isso que a caça reconhece
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    alvo = scripts / "train.py"
+    alvo.write_text("import time; time.sleep(60)\n")
+    órfão = subprocess.Popen([sys.executable, str(alvo)])
     jp = tmp_path / "jobs.json"
     jp.write_text(json.dumps([{"id": "antigo", "tipo": "pretreino", "titulo": "webui morreu",
                                "argv": [], "state": "rodando", "pid": órfão.pid,
                                "started": time.time(), "ended": None, "rc": None}]))
 
-    runner = JobRunner(jobs_path=jp)
+    runner = JobRunner(jobs_path=jp, caçar=True)   # o processo da webui caça; um teste, não
     assert órfão.wait(timeout=10) in (-15, 130)               # o SIGTERM chegou
     rec = json.loads(jp.read_text())[0]
     assert rec["state"] == "interrompido" and "órfão" in rec["motivo"]
     assert runner.current is None and not runner.rodando()
+
+
+def test_boot_não_mata_processo_alheio(tmp_path):
+    """O registro pode apontar para um pid reciclado — ou, pior, o `jobs.json` real pode ter
+    um treino VIVO e um teste chamar `create_app()` sem `jobs=` (foi o que matou o run da
+    wiki no step 74 em 2026-11-03). A caça só SIGTERMa script de treino DESTE repo.
+    """
+    alheio = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    jp = tmp_path / "jobs.json"
+    jp.write_text(json.dumps([{"id": "x", "tipo": "pretreino", "titulo": "outro processo",
+                               "argv": [], "state": "rodando", "pid": alheio.pid,
+                               "started": time.time(), "ended": None, "rc": None}]))
+    try:
+        runner = JobRunner(jobs_path=jp, caçar=True)
+        time.sleep(0.5)
+        assert alheio.poll() is None                          # continua vivo
+        rec = json.loads(jp.read_text())[0]
+        assert rec["state"] == "interrompido" and "não é do projeto" in rec["motivo"]
+        assert not runner.rodando()
+    finally:
+        alheio.kill()
+        alheio.wait(timeout=10)
 
 
 def test_saida_do_filho_chega_antes_do_fim(tmp_path):

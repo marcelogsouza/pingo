@@ -51,12 +51,20 @@ def _checkpoint(raiz: Path, nome: str = "final") -> Path:
     return d
 
 
+def _app(servidor, tmp_path):
+    """App com um JobRunner de MENTIRA: `create_app()` sem `jobs=` usa o runs/jobs.json real,
+    e o boot dele manda SIGTERM no treino que estiver rodando (a suíte matou o run da wiki
+    no step 74 em 2026-11-03)."""
+    from pingo.jobs import JobRunner
+    return w.create_app(servidor, JobRunner(jobs_path=tmp_path / "jobs.json"))
+
+
 @pytest.fixture()
 def ambiente(tmp_path):
     """(app Flask, Server) com um único checkpoint SFT em tmp_path."""
     d = _checkpoint(tmp_path)
     servidor = w.Server([w.ModelSpec("sft", "SFT de teste", d, True)], device="cpu")
-    app = w.create_app(servidor)
+    app = _app(servidor, tmp_path)
     app.config.update(TESTING=True)
     return app.test_client(), servidor
 
@@ -210,7 +218,7 @@ def test_chat_recusa_duas_geracoes_ao_mesmo_tempo(ambiente):
 
 def test_chat_sem_checkpoint_devolve_503(tmp_path):
     servidor = w.Server([], device="cpu")
-    app = w.create_app(servidor)
+    app = _app(servidor, tmp_path)
     app.config.update(TESTING=True)
     r = app.test_client().post("/api/chat", json={"mensagem": "oi"})
     assert r.status_code == 503
@@ -219,7 +227,7 @@ def test_chat_sem_checkpoint_devolve_503(tmp_path):
 def test_prompt_maior_que_o_contexto_devolve_400(tmp_path):
     d = _checkpoint(tmp_path)          # ctx 16 tokens
     servidor = w.Server([w.ModelSpec("sft", "SFT", d, True)], device="cpu")
-    app = w.create_app(servidor)
+    app = _app(servidor, tmp_path)
     app.config.update(TESTING=True)
     r = app.test_client().post("/api/chat", json={"mensagem": "oi mundo resposta " * 40})
     assert r.status_code == 400
@@ -258,7 +266,7 @@ def test_lab_do_base_nao_recebe_tokens_de_chat(tmp_path):
     d = _checkpoint(tmp_path)
     servidor = w.Server([w.ModelSpec("sft", "SFT", d, True),
                          w.ModelSpec("base", "Base", d, False)], device="cpu")
-    app = w.create_app(servidor)
+    app = _app(servidor, tmp_path)
     app.config.update(TESTING=True)
     cliente = app.test_client()
     base = cliente.post("/api/lab/tokenize", json={"texto": "oi mundo", "modelo": "base"}).get_json()
@@ -684,7 +692,7 @@ def test_lab_exige_tokenizer_do_mesmo_vocab_que_a_tabela(tmp_path):
     menor = {t: i for i, t in enumerate(list(VOCAB)[:len(VOCAB) - 3])}
     Tokenizer(models.WordLevel(vocab=menor, unk_token="<unk>")).save(str(d / "tokenizer.json"))
     servidor = w.Server([w.ModelSpec("sft", "SFT", d, True)], device="cpu")
-    app = w.create_app(servidor)
+    app = _app(servidor, tmp_path)
     app.config.update(TESTING=True)
     r = app.test_client().get("/api/lab/embedding?modelo=sft&id=1")
     assert r.status_code == 400 and "tokenizer" in r.get_json()["erro"]

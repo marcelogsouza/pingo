@@ -60,14 +60,20 @@ class Job:
 
 
 class JobRunner:
-    def __init__(self, jobs_path: Path | None = None, ring: int = 400):
+    def __init__(self, jobs_path: Path | None = None, ring: int = 400,
+                 caçar: bool | None = None):
         self.jobs_path = Path(jobs_path) if jobs_path else ROOT / "runs" / "jobs.json"
         self._lock = threading.Lock()
         self.current: Job | None = None
         self._proc: subprocess.Popen | None = None
         self._saida: collections.deque[str] = collections.deque(maxlen=ring)
         self.historico: list[dict] = []
-        self._caçar_órfãos()
+        # A caça só é legítima no processo da webui: um teste que importa o módulo (ou
+        # qualquer outro uso da classe) não pode mandar SIGTERM no treino que está rodando.
+        if caçar is None:
+            caçar = any(str(a).endswith("webui.py") for a in sys.argv[:2])
+        if caçar:
+            self._caçar_órfãos()
         self._carregar()
 
     # --------------------------------------------------------------- boot
@@ -77,6 +83,22 @@ class JobRunner:
                 self.historico = json.loads(self.jobs_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 self.historico = []
+
+    def _é_do_projeto(self, pid: int) -> bool:
+        """O pid é um script de treino/preparação nosso? (a caça não mata processo alheio)
+
+        Sem esta checagem, um `JobRunner` apontado para o `runs/jobs.json` do repo — o que
+        qualquer teste que chame `create_app()` sem `jobs=` faz — mandaria SIGTERM no treino
+        VIVO registrado ali (aconteceu em 2026-11-03: a suíte matou o run da wiki no step 74).
+        """
+        try:
+            linha = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "replace")
+        except OSError:
+            return False
+        linha = linha.replace("\x00", " ")
+        return any(f"scripts/{nome}" in linha for nome in
+                   ("train.py", "train_sft.py", "gen_sft.py", "prepare_tokens.py",
+                    "train_tokenizer.py"))
 
     def _caçar_órfãos(self) -> None:
         """Job marcado `rodando` de uma webui que morreu: SIGTERM e encerra o registro.
@@ -95,13 +117,16 @@ class JobRunner:
             if rec.get("state") != "rodando":
                 continue
             pid = rec.get("pid")
+            motivo = "webui reiniciou — órfão encerrado"
             if pid and os.path.exists(f"/proc/{pid}"):
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            rec.update(state="interrompido", ended=time.time(),
-                       motivo="webui reiniciou — órfão encerrado")
+                if self._é_do_projeto(pid):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                else:                    # pid reciclado/estranho: fecha o registro sem matar
+                    motivo = "webui reiniciou — pid não é do projeto (não interrompido)"
+            rec.update(state="interrompido", ended=time.time(), motivo=motivo)
             mexido = True
         if mexido:
             self.jobs_path.write_text(json.dumps(registros, ensure_ascii=False, indent=2),
