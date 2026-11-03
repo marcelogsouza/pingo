@@ -25,7 +25,7 @@ sair do terminal… mas sem ter que lembrar os argv de cor.
 | ① dataset (QA) | escolhe um `.jsonl` de `data/**` (ou digita o caminho), roda `qa_dataset.analisar` | `GET /api/treino/datasets`, `GET /api/treino/qa?path=…` |
 | ② tokenização | lista o registry `tokenizer/*` (o default vem marcado **congelado**); treina vocab novo (`--id/--vocab/--specials/--jsonl`) ou binariza um JSONL aprovado com um vocab existente | `POST /api/treino/tokenizador`, `POST /api/treino/tokenizacao` |
 | ③ treino | formulários pré-treino/SFT com os padrões dos runs recomendados; **épocas → `--max-steps`** calculado sobre o `train_tokens` do `meta.json`; iniciar / retomar (`--resume`) / parar (SIGTERM) | `POST /api/treino/pretreino`, `POST /api/treino/sft`, `POST /api/treino/parar` |
-| ④ runs & monitor | histórico de `runs/*` com steps/val/final/ckpt; clique → **curva de loss SVG** do `log.jsonl`; hardware na barra de cima sempre | `GET /api/treino/runs`, `GET /api/treino/runs/<nome>`, `GET /api/treino/hw` |
+| ④ runs & monitor | histórico de `runs/*` com steps/**progresso**/val/final/ckpt; clique → **curva de loss SVG** do `log.jsonl`; hardware na barra de cima sempre | `GET /api/treino/runs`, `GET /api/treino/runs/<nome>`, `GET /api/treino/hw` |
 
 O front (`web/treino.html`, vanilla JS, zero dependências) faz **polling de 2 s** em
 `status`/`hw`/`log?depois=<cursor>` — não SSE (decisão do treino-4: o anel do runner + cursor
@@ -47,6 +47,42 @@ resolvem sem o peso de um stream por aba aberta).
 - **mutex com o chat**: `Server._jobs` é injetado no `create_app`; com job rodando,
   `Server.carregar()` **recusa** carregar modelo (a VRAM é uma só), e toda rota de disparo
   descarrega o modelo do chat antes de começar (`_desocupa_gpu`).
+
+## Progresso do run (quanto falta)
+
+Desde 2026-11-03 a aba ③ mostra **quanto falta** de um run, não só a curva de loss:
+
+```
+pré-treino wiki-120m                                     4,0%
+▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+step 50 / 1.240 · tokens 26,2M / 650,1M · dataset 650,2M (1,00×) · 100,9k tok/s
+decorrido 4m 48s · restam 1h 43m
+```
+
+A conta é sempre a mesma: `% = step / max_steps`, `tokens = tokens_seen / (max_steps ×
+tokens_por_step)`, `ETA = (max_steps − step) ÷ taxa`, e a **taxa é medida no próprio log**
+(dois registros de treino consecutivos: steps ÷ Δ`t`, onde `t` é o relógio do processo) — não
+é média desde o início, então uma queda de throughput aparece no ETA em segundos. Runs com
+`--resume` não enganam a conta: o step inicial é o do checkpoint, os tokens vistos vêm do log
+e `max_steps` é absoluto.
+
+De onde vem o **plano** (`max_steps`, `tokens_por_step`), em ordem de preferência:
+
+1. o `argv` do job (a UI sabe o comando que disparou);
+2. o registro **`evento=inicio`** que o `train.py` grava no `log.jsonl` na largada —
+   `{evento, max_steps, tokens_por_step, tokens_dir, train_tokens}`. É o que faz um run
+   disparado **fora** da UI (nohup, terminal) também responder "quanto falta";
+3. nada disso → a barra mostra o andamento sem `%` nem ETA (runs antigos, ex. `pt-120m`).
+
+O "tamanho do dataset" é o `train_tokens` do `meta.json` do `--tokens-dir`: a barra diz
+quantas **épocas** o plano cobre (1,00× = o corpus inteiro uma vez). Detalhe importante: se o
+run é `max_steps` acima de 1 época, o `%` é do **plano**, não do dataset — os dois números
+aparecem lado a lado justamente para não confundir.
+
+Detalhe de implementação que vale saber: a página calcula o progresso **sozinha** quando a API
+ainda não manda o campo `progresso` (fallback no JS) — foi assim que a barra entrou em
+produção **sem reiniciar** a webui no meio de um treino (o boot do runner caça e mata órfãos,
+então reiniciar = matar o run).
 
 ## O que as validações barram (antes de gastar processo)
 

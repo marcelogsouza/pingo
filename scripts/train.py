@@ -211,7 +211,13 @@ def run(args: argparse.Namespace) -> dict:
         logf.write(json.dumps(rec) + "\n")
         logf.flush()
 
+    # o plano do run fica no próprio log: com isso qualquer leitor (a UI, um `tail`, um
+    # run disparado fora do /treino) sabe calcular "quantos passos faltam" e o ETA.
     t0 = time.time()
+    log(evento="inicio", max_steps=max_steps, tokens_por_step=global_tokens,
+        tokens_dir=str(args.tokens_dir),
+        train_tokens=int((data.meta or {}).get("train_tokens") or 0))
+
     last_ckpt, last_log, loss_sum = t0, t0, 0.0
     tokens_seen = step * global_tokens
     print(f"modelo {sum(p.numel() for p in model.parameters()):,} params | "

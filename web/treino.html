@@ -105,6 +105,19 @@
     font:12px/1.5 var(--mono);color:var(--muted);height:260px;overflow-y:auto;white-space:pre-wrap;
     margin-top:10px}
   #curva{width:100%;height:220px;display:block;margin-top:10px}
+  /* progresso do run: quanto do dataset já foi, e quanto falta */
+  #prog{margin:12px 0 2px}
+  .prog-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+    font-size:13px;color:var(--muted);margin-bottom:6px}
+  .prog-head b{color:var(--text);font-variant-numeric:tabular-nums}
+  .barra{height:14px;border-radius:8px;background:var(--bg2);border:1px solid var(--line);overflow:hidden}
+  .barra>i{display:block;height:100%;width:0;border-radius:8px;
+    background:linear-gradient(90deg,#2f6fe4,#5b93ff);transition:width .6s ease}
+  .barra.parado>i{background:linear-gradient(90deg,#4a5468,#6c7a91)}
+  .prog-det{margin-top:7px;display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim)}
+  .prog-det b{color:var(--text);font-variant-numeric:tabular-nums}
+  .barra.mini{display:inline-block;width:66px;height:7px;vertical-align:middle}
+  .pctmini{font-size:11px;color:var(--dim);margin-left:6px;font-variant-numeric:tabular-nums}
   .erro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;
     background:#2a1518;border:1px solid #6b3535;color:#ffb4b4;border-radius:12px;padding:11px 18px;
     font-size:13.5px;max-width:80vw;display:none}
@@ -271,6 +284,11 @@
       <h2>Job em andamento</h2>
       <p class="hint">O "parar" manda SIGTERM: o script fecha o step, grava o checkpoint e sai limpo —
         aí você marca "retomar" e continua exatamente dali.</p>
+      <div id="prog" hidden>
+        <div class="prog-head"><span id="prog-nome">—</span><span id="prog-pct"></span></div>
+        <div class="barra"><i id="prog-fill"></i></div>
+        <div id="prog-det" class="prog-det"></div>
+      </div>
       <svg id="curva" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
       <div id="log">—</div>
     </div>
@@ -282,7 +300,7 @@
       <h2>Histórico de runs</h2>
       <p class="hint">Clique numa linha para ver a curva de loss do run.
         <code>pt-120m</code> e o backup são <b>protegidos</b>: a interface nunca escreve neles.</p>
-      <table id="runs-list"><thead><tr><th>run</th><th>steps</th><th>val loss</th><th>final</th><th>ckpt</th><th>log</th><th>modificado</th></tr></thead><tbody></tbody></table>
+      <table id="runs-list"><thead><tr><th>run</th><th>steps</th><th>progresso</th><th>val loss</th><th>final</th><th>ckpt</th><th>log</th><th>modificado</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card" id="card-curva" style="display:none">
       <h2>Curva — <span id="curva-nome"></span></h2>
@@ -321,6 +339,11 @@ const mb = n => n == null ? "—" : (n >= 1e9 ? (n/1e9).toFixed(2)+" GB" :
   n >= 1e6 ? (n/1e6).toFixed(1)+" MB" : n >= 1e3 ? (n/1e3).toFixed(1)+" kB" : n + " B");
 const hora = t => new Date(t * 1000).toLocaleString("pt-BR", {day:"2-digit", month:"2-digit",
   hour:"2-digit", minute:"2-digit"});
+// duração curta e humana: 42 s · 6m 20s · 1h 05m
+const inteiro = n => n == null ? "—" : n.toLocaleString("pt-BR");   // steps inteiros
+const dur = s => (s == null || !isFinite(s)) ? "—" : s < 60 ? Math.round(s) + " s"
+  : s < 3600 ? Math.floor(s/60) + "m " + String(Math.round(s % 60)).padStart(2, "0") + "s"
+  : Math.floor(s/3600) + "h " + String(Math.floor((s % 3600)/60)).padStart(2, "0") + "m";
 
 // ------------------------------------------------------------------ abas
 $$(".tab").forEach(b => b.onclick = () => {
@@ -379,8 +402,13 @@ async function carregarListas() {
             : run.ultimo && run.ultimo.val_loss == null && run.ultimo.ppl != null ? "ppl " + run.ultimo.ppl.toFixed(1) : "—";
     const tr = document.createElement("tr");
     tr.className = "click";
+    const pr = run.progresso;
+    const prog = pr && pr.pct != null
+      ? `<span class="barra mini"><i style="width:${Math.min(100, pr.pct).toFixed(1)}%"></i></span>
+         <span class="pctmini">${pr.pct.toFixed(0)}% de ${inteiro(pr.max_steps)}</span>`
+      : "—";
     tr.innerHTML = `<td><b>${run.nome}</b>${run.protegido ? ' <span class="tag lock">protegido</span>' : ""}</td>` +
-      `<td>${run.steps ?? "—"}</td><td>${val}</td><td>${run.final ? "✓" : ""}</td>` +
+      `<td>${run.steps ?? "—"}</td><td>${prog}</td><td>${val}</td><td>${run.final ? "✓" : ""}</td>` +
       `<td>${run.ckpt ? "✓" : ""}</td><td>${run.log_linhas || "—"}</td><td>${hora(run.mtime)}</td>`;
     tr.onclick = () => curvar("#curva2", "#curva-nome", run.nome);
     tb.appendChild(tr);
@@ -485,6 +513,90 @@ $("#parar").onclick = async () => {
 };
 $("#reload").onclick = () => carregarListas();
 
+// ------------------------------------------------------------------ progresso do run
+// "Quanto falta?" = step/max_steps (o tamanho do plano), tokens vistos/total e ETA.
+// Fonte preferida: o `progresso` que a API já calcula (argv do job + log). Fallback: a
+// própria página lê o argv e o log — é o que mantém a barra viva quando a webui no ar é
+// anterior a esta feature (reiniciar a webui mataria o treino, então não dá para exigir).
+const tamDataset = {};                    // tokens_dir -> train_tokens (o corpus)
+async function datasetDe(dir) {
+  if (!dir) return null;
+  if (dir in tamDataset) return tamDataset[dir];
+  tamDataset[dir] = null;
+  try {
+    const base = dir.split("/").filter(Boolean).pop();
+    const lista = (await api("/api/treino/tokens")).tokens || [];
+    const achado = lista.find(t => (t.dir || "").split("/").filter(Boolean).pop() === base);
+    tamDataset[dir] = achado ? achado.train_tokens : null;
+  } catch (e) {}
+  return tamDataset[dir];
+}
+function planoDoArgv(argv) {
+  if (!argv || !argv.length) return null;
+  const opt = (nome, def) => {
+    const i = argv.indexOf(nome);
+    return i >= 0 && argv[i + 1] != null ? Number(argv[i + 1]) : def;
+  };
+  const bs = opt("--batch-size", 16), ctx = opt("--ctx", 2048), acc = opt("--accum-steps", 16);
+  const iTok = argv.indexOf("--tokens-dir");
+  const iMax = argv.indexOf("--max-steps");
+  return {max_steps: iMax >= 0 ? Number(argv[iMax + 1]) : null,
+          tokens_por_step: bs * ctx * acc,
+          tokens_dir: iTok >= 0 ? argv[iTok + 1] : null};
+}
+async function progressoDoJob(j, nome) {
+  if (j && j.progresso) return j.progresso;          // a API já respondeu
+  const plano = planoDoArgv(j && j.argv);
+  if (!plano) return null;
+  let regs = [];
+  try { regs = (await api("/api/treino/runs/" + encodeURIComponent(nome))).registros || []; }
+  catch (e) { return null; }
+  const treino = regs.filter(r => r.step != null && r.train_loss != null);
+  if (!treino.length) return null;
+  const ult = treino[treino.length - 1];
+  let taxa = null;                                   // steps/s, medidos no próprio log
+  for (let i = treino.length - 1; i > 0; i--) {
+    const a = treino[i - 1], b = treino[i];
+    if (a.t != null && b.t != null && b.t > a.t && b.step > a.step) {
+      taxa = (b.step - a.step) / (b.t - a.t); break;
+    }
+  }
+  const max_steps = plano.max_steps || null, tps = plano.tokens_por_step;
+  const tokens_seen = ult.tokens_seen ?? null;
+  const tokens_total = (max_steps && tps) ? max_steps * tps : null;
+  const toks_s = ult.toks_s ?? (taxa && tps ? Math.round(taxa * tps) : null);
+  const dataset = await datasetDe(plano.tokens_dir);
+  const eta = (max_steps && taxa) ? Math.max(0, (max_steps - ult.step) / taxa)
+    : (tokens_total && tokens_seen != null && toks_s) ? Math.max(0, (tokens_total - tokens_seen) / toks_s)
+    : null;
+  return {step: ult.step, max_steps, pct: max_steps ? 100 * ult.step / max_steps : null,
+          tokens_seen, tokens_total, dataset_tokens: dataset,
+          epocas: (tokens_total && dataset) ? tokens_total / dataset : null,
+          toks_s, decorrido_s: ult.t ?? null, eta_s: eta};
+}
+function mostrarProgresso(job, p) {
+  const caixa = $("#prog");
+  if (!p || p.step == null) { caixa.hidden = true; return; }
+  caixa.hidden = false;
+  const rodando = job && (job.state === "rodando" || job.state === "parando");
+  const pct = p.pct == null ? null : Math.min(100, p.pct);
+  $("#prog-nome").innerHTML = (job ? job.titulo : "run") +
+    (rodando ? "" : ` <span class="tag">${job ? job.state : "parado"}</span>`);
+  $("#prog-pct").innerHTML = pct == null ? "" : `<b>${pct.toFixed(1)}%</b>`;
+  $("#prog-fill").style.width = (pct ?? 0) + "%";
+  $("#prog .barra").classList.toggle("parado", !rodando);
+  const linha = [];
+  linha.push(`<span>step <b>${inteiro(p.step)}</b>${p.max_steps ? " / " + inteiro(p.max_steps) : ""}</span>`);
+  if (p.tokens_seen != null) linha.push(`<span>tokens <b>${fmt(p.tokens_seen)}</b>` +
+    (p.tokens_total ? " / " + fmt(p.tokens_total) : "") + `</span>`);
+  if (p.dataset_tokens) linha.push(`<span>dataset <b>${fmt(p.dataset_tokens)}</b>` +
+    (p.epocas ? ` (${p.epocas.toFixed(2)}×)` : "") + `</span>`);
+  if (p.toks_s) linha.push(`<span><b>${fmt(p.toks_s)}</b> tok/s</span>`);
+  if (p.decorrido_s != null) linha.push(`<span>decorrido <b>${dur(p.decorrido_s)}</b></span>`);
+  if (p.eta_s != null) linha.push(`<span>${rodando ? "restam" : "parou faltando"} <b>${dur(p.eta_s)}</b></span>`);
+  $("#prog-det").innerHTML = linha.join("");
+}
+
 // ------------------------------------------------------------------ barra de status + hw
 async function pollStatus() {
   try {
@@ -505,10 +617,15 @@ async function pollStatus() {
       botões(false);
     }
     await pollLog();
-    if (j && j.out && (j.state === "rodando" || j.state === "parando")) {
+    if (j && j.out) {
       const nome = j.out.split("/").pop();
+      mostrarProgresso(j, await progressoDoJob(j, nome));
       if (curvaJob !== j.id) { curvaJob = j.id; curvaTick = 0; }
-      if (curvaTick++ % 3 === 0) curvar("#curva", null, nome);   // a cada ~6 s
+      if (curvaTick++ % 3 === 0 && (j.state === "rodando" || j.state === "parando")) {
+        curvar("#curva", null, nome);   // a cada ~6 s
+      }
+    } else {
+      $("#prog").hidden = true;
     }
   } catch (e) {}
 }

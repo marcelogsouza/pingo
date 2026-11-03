@@ -77,6 +77,124 @@ MAX_CONTEXT_CHARS = 6000
 PAGINA_LAB = ROOT / "web" / "lab.html"
 PAGINA_TREINO = ROOT / "web" / "treino.html"
 
+
+# ---------------------------------------------------------------- progresso de um run
+# "Quanto falta?" só tem resposta se o run sabe o tamanho do plano (max_steps) e o custo
+# de um step (batch × ctx × accum). As duas fontes, por ordem: o argv de quem disparou e o
+# registro `evento=inicio` que o train.py grava no log.jsonl (self-describing, vale mesmo
+# para um run iniciado fora da UI).
+
+def _plano_do_argv(argv: list[str] | None) -> dict | None:
+    """(max_steps, tokens_por_step) do argv do `train.py`; None se nem há argv."""
+    if not argv:
+        return None
+
+    def opt(nome: str, default):
+        if nome not in argv:
+            return default
+        i = argv.index(nome)
+        if i + 1 >= len(argv):
+            return default
+        valor = argv[i + 1]
+        if default is None:              # opção textual sem default conhecido fica crua
+            return valor
+        try:
+            return type(default)(valor)
+        except ValueError:
+            return default
+
+    bs = opt("--batch-size", 16)
+    ctx = opt("--ctx", 2048)
+    acc = opt("--accum-steps", 16)
+    return {"max_steps": opt("--max-steps", 0) or None,
+            "tokens_por_step": bs * ctx * acc,
+            "tokens_dir": opt("--tokens-dir", None)}
+
+
+def _progresso(out: Path, argv: list[str] | None = None, tokens_dir: str | None = None) -> dict | None:
+    """Step/max_steps, tokens vistos/total, tok/s, decorrido e ETA de um run.
+
+    Lê as últimas linhas do `log.jsonl` (a taxa sai dos DOIS últimos registros de treino —
+    `t` é o relógio do processo, então intervalo de `t` é tempo de treino de verdade, e o
+    resume não engana a conta). Sem plano conhecido, devolve o andamento sem % e sem ETA.
+    """
+    log = Path(out) / "log.jsonl"
+    if not log.exists():
+        return None
+    regs: list[dict] = []
+    try:
+        with log.open(encoding="utf-8", errors="replace") as fh:
+            for linha in fh:
+                try:
+                    regs.append(json.loads(linha))
+                except json.JSONDecodeError:
+                    continue            # linha no meio do flush
+    except OSError:
+        return None
+    if len(regs) > 400:
+        regs = regs[-400:]
+
+    plano = _plano_do_argv(argv)
+    inicio = next((r for r in reversed(regs) if r.get("evento") == "inicio"), None)
+    if plano is None or not plano.get("max_steps"):
+        if inicio:
+            plano = {"max_steps": inicio.get("max_steps"),
+                     "tokens_por_step": inicio.get("tokens_por_step"),
+                     "tokens_dir": inicio.get("tokens_dir")}
+    if plano is None:
+        plano = {}
+
+    treino = [r for r in regs if r.get("step") is not None and r.get("train_loss") is not None]
+    if not treino:
+        return None
+    ult = treino[-1]
+    step = ult["step"]
+    max_steps = plano.get("max_steps") or None
+    tps = plano.get("tokens_por_step") or None
+
+    taxa = None                          # steps por segundo, medida no próprio log
+    for a, b in zip(reversed(treino[:-1]), reversed(treino)):
+        ta, tb = a.get("t"), b.get("t")
+        if None not in (ta, tb) and tb > ta and b["step"] > a["step"]:
+            taxa = (b["step"] - a["step"]) / (tb - ta)
+            break
+
+    tokens_seen = ult.get("tokens_seen")
+    tokens_total = max_steps * tps if (max_steps and tps) else None
+    toks_s = ult.get("toks_s") or (round(taxa * tps) if (taxa and tps) else None)
+    eta = None
+    if max_steps is not None and taxa:
+        eta = max(0.0, (max_steps - step) / taxa)
+    elif tokens_total and tokens_seen and toks_s:
+        eta = max(0.0, (tokens_total - tokens_seen) / toks_s)
+
+    dataset = None                       # tokens do corpus (o "tamanho do dataset")
+    caminho = tokens_dir or plano.get("tokens_dir")
+    if caminho:
+        meta = Path(caminho) / "meta.json"
+        try:
+            dataset = json.loads(meta.read_text(encoding="utf-8")).get("train_tokens")
+        except (OSError, json.JSONDecodeError):
+            dataset = None
+
+    return {"step": step, "max_steps": max_steps,
+            "pct": (100.0 * step / max_steps) if max_steps else None,
+            "tokens_seen": tokens_seen, "tokens_total": tokens_total,
+            "dataset_tokens": dataset,
+            "epocas": (tokens_total / dataset) if (tokens_total and dataset) else None,
+            "toks_s": toks_s, "decorrido_s": ult.get("t"),
+            "eta_s": eta, "tokens_por_step": tps}
+
+
+def _argv_do_historico(jobs, out: Path) -> list[str] | None:
+    """argv de um run já disparado pela UI (o histórico do jobs.json guarda o comando)."""
+    alvo = Path(out).name
+    for rec in reversed(getattr(jobs, "historico", []) or []):
+        caminho = rec.get("out")
+        if caminho and Path(caminho).name == alvo:
+            return rec.get("argv")
+    return None
+
 # treino-4: nomes de artefatos (runs/, data/tokens/, tokenizer/) — sem trilha de path
 NOME_Ok = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 RUNS_PROTEGIDOS = {"pt-120m", "pt-120m-BACKUP-2026-10-30"}   # AGENTS.md: não se sobrescreve
@@ -856,7 +974,11 @@ def create_app(server: Server | None = None, jobs: JobRunner | None = None) -> F
 
     @app.get("/api/treino/status")
     def treino_status():
-        return jsonify(jobs.estado())
+        estado = jobs.estado()
+        job = estado.get("job")
+        if job:                       # "quanto falta" do job corrente, junto do estado
+            job["progresso"] = _progresso(Path(job["out"]), job.get("argv")) if job.get("out") else None
+        return jsonify(estado)
 
     @app.get("/api/treino/hw")
     def treino_hw():
@@ -996,6 +1118,7 @@ def create_app(server: Server | None = None, jobs: JobRunner | None = None) -> F
                           "ckpt": (sub / "ckpt.pt").exists(),
                           "steps": (ultimo or {}).get("step"),
                           "ultimo": ultimo, "log_linhas": n_linhas,
+                          "progresso": _progresso(sub, _argv_do_historico(jobs, sub)),
                           "mtime": round(sub.stat().st_mtime, 1)})
         return jsonify({"runs": sorted(itens, key=lambda r: -r["mtime"])})
 
@@ -1014,7 +1137,8 @@ def create_app(server: Server | None = None, jobs: JobRunner | None = None) -> F
                     registros.append(json.loads(linha))
                 except json.JSONDecodeError:
                     continue
-        return jsonify({"nome": nome, "registros": registros[-4000:]})
+        return jsonify({"nome": nome, "registros": registros[-4000:],
+                        "progresso": _progresso(d, _argv_do_historico(jobs, d))})
 
     # -- disparar jobs --------------------------------------------------------------
 

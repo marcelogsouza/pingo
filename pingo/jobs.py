@@ -130,6 +130,11 @@ class JobRunner:
             job = Job(id=uuid.uuid4().hex[:8], tipo=tipo, titulo=titulo, argv=list(argv),
                       out=out, precisa_gpu=precisa_gpu)
             meio = dict(os.environ)
+            # stdout do filho tem de ser LINHA a linha: em pipe o print do Python fica
+            # block-buffered (8 KB ≈ 1000 steps de treino) e o painel de log da UI passaria
+            # minutos vazio para depois despejar tudo de uma vez. `bufsize=1` só vale p/ o
+            # lado do pai — quem precisa saber é o interpretador do filho.
+            meio["PYTHONUNBUFFERED"] = "1"   # env explícito do chamador ainda pode sobrescrever
             if env:
                 meio.update(env)
             # stdout do filho em linha por linha; stderr junto (o print do treino é o log)

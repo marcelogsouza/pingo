@@ -98,6 +98,27 @@ def test_boot_caça_o_órfão_e_reescreve_o_registro(tmp_path):
     assert runner.current is None and not runner.rodando()
 
 
+def test_saida_do_filho_chega_antes_do_fim(tmp_path):
+    """stdout do filho em pipe é block-buffered por padrão (despeja a cada ~8 KB): o painel
+    de log da UI passaria minutos vazio no meio de um treino e despejaria tudo no fim.
+    `bufsize=1` no Popen só vale p/ o lado do pai — o filho precisa de PYTHONUNBUFFERED=1.
+    """
+    script = tmp_path / "demorado.py"
+    script.write_text(
+        "import time\n"
+        "print('primeira linha')      # sem flush: no pipe cru só sairia ao terminar\n"
+        "time.sleep(6)\n"
+    )
+    runner = JobRunner(jobs_path=tmp_path / "jobs.json")
+    runner.iniciar("qa", "fala cedo", [str(script)])
+    t0 = time.time()
+    while time.time() - t0 < 3.0 and "primeira linha" not in runner.saida():
+        time.sleep(0.05)
+    assert "primeira linha" in runner.saida(), "a linha só chegou no fim — stdout bufferizado"
+    runner.parar()
+    esperar_fim(runner)
+
+
 def test_log_records_tolera_linha_pela_metade(tmp_path):
     out = tmp_path / "run"
     out.mkdir()

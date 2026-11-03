@@ -157,6 +157,43 @@ def test_runs_listam_e_curva_le_log(ambiente):
     assert ambiente["client"].get("/api/treino/runs/nao-existe").status_code == 404
 
 
+def test_progresso_do_run_diz_quanto_falta(ambiente):
+    """A barra do /treino precisa de três coisas: o tamanho do plano (max_steps), o custo
+    do step e o andamento. O plano vem do `evento=inicio` que o train.py grava no log —
+    por isso um run disparado fora da UI também sabe responder "quanto falta"."""
+    raiz, c = ambiente["raiz"], ambiente["client"]
+    tok = raiz / "data" / "tokens" / "tinytok"
+    tok.mkdir(parents=True)
+    (tok / "meta.json").write_text(json.dumps({"train_tokens": 1_000_000, "vocab_size": 64}))
+    run = raiz / "runs" / "complano"
+    run.mkdir()
+    (run / "log.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"step": 0, "t": 0.0, "evento": "inicio", "max_steps": 100,
+         "tokens_por_step": 10_000, "tokens_dir": str(tok), "train_tokens": 1_000_000},
+        {"step": 10, "t": 100.0, "train_loss": 9.9, "toks_s": 9000, "tokens_seen": 100_000},
+        {"step": 30, "t": 300.0, "train_loss": 8.5, "toks_s": 9500, "tokens_seen": 300_000},
+    ]) + "\n")
+
+    p = c.get("/api/treino/runs/complano").get_json()["progresso"]
+    assert p["step"] == 30 and p["max_steps"] == 100
+    assert abs(p["pct"] - 30.0) < 1e-9
+    assert p["tokens_total"] == 1_000_000 and p["tokens_seen"] == 300_000
+    # 100k tokens/step ... taxa medida no log: 20 steps em 200 s = 0,1 step/s → faltam 700 s
+    assert abs(p["eta_s"] - 700.0) < 1.0
+    assert abs(p["epocas"] - 1.0) < 1e-9            # 100 steps × 10k = o dataset inteiro
+    assert p["dataset_tokens"] == 1_000_000
+    # a lista de runs também traz o progresso (a coluna da tabela)
+    lista = {r["nome"]: r for r in c.get("/api/treino/runs").get_json()["runs"]}
+    assert lista["complano"]["progresso"]["pct"] == 30.0
+
+    # run sem plano (log antigo, só loss) não inventa % nem ETA
+    velho = raiz / "runs" / "veloplano"
+    velho.mkdir()
+    (velho / "log.jsonl").write_text('{"step": 5, "t": 10.0, "train_loss": 7.0}\n')
+    p2 = c.get("/api/treino/runs/veloplano").get_json()["progresso"]
+    assert p2["step"] == 5 and p2["pct"] is None and p2["eta_s"] is None
+
+
 def test_pretreino_recusa_nome_ruim_run_protegido_e_out_ocupado(ambiente):
     c, tokens = ambiente["client"], ambiente["tokens_dir"]()
     payloads = [
