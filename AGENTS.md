@@ -45,17 +45,24 @@ atual é **corpus** (wiki limpa × OSCAR sujo). Comandos por etapa em
 
 ### ⏳ Runs da wiki em andamento (retomar daqui)
 
-| run | o que é | estado em 2026-11-03 14:04 |
+| run | o que é | estado em 2026-11-03 15:38 |
 |---|---|---|
-| **`runs/wiki-120m`** | do zero na wiki, 1.240 steps | **rodando** (step 200, 16,1%, ~90 min) |
-| `runs/pt-120m-wiki` | `--resume` do ckpt do OSCAR na wiki, `max_steps` **6488** (5.248 + 1.240) | engatilhado: dispara sozinho quando o (a) `concluir` |
+| **`runs/wiki-120m`** | do zero na wiki, 1.240 steps | ✅ **concluído** — val loss **2,878 / ppl 17,78** no val da wiki |
+| `runs/pt-120m-wiki` | `--resume` do ckpt do OSCAR na wiki, `max_steps` **6488** (5.248 + 1.240) | **rodando** (step 5.300, restam ~103 min, termina ~17:22) |
 
-- **Ao voltar**: `curl -s localhost:8010/api/treino/status` → a barra do `/treino` diz
-  step/%/ETA (ou `tail -f runs/wiki-120m/log.jsonl`). Terminando o (a) com `concluido`, o (b)
-  entra na fila sozinho; **se o vigia morreu** (fechou o terminal), dispare à mão:
+**O (a) já respondeu a pergunta da fase**: 650M tokens **limpos** de wiki dão ppl **17,78** no
+val da wiki, contra **21,7** do modelo treinado em 2,75B tokens **sujos** do OSCAR medido no
+mesmo harness (o `pt-120m` no step 5.250 do run (b) marca exatamente 3,0759 / 21,7). Ou seja:
+no domínio da wiki, o corpus limpo e 4× menor ganha. O (b) dirá se o OSCAR ainda serve de
+inicialização (o número a bater é 17,78).
+
+- **Ao voltar**: `curl -s localhost:8010/api/treino/status` → a barra do `/treino` diz step/%/ETA
+  **da sessão** (run retomado conta a partir do `--resume`, não do plano absoluto que mistura
+  corpora). O (b) terminando, o passo é o **wiki-4** (abaixo).
+  Se precisar disparar o (b) de novo, o comando é:
   `curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' -d
   '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488,"compile":true}'`
-  (o `ckpt.pt` já está lá, cópia do `pt-120m`; `runs/pt-120m` continua intocado).
+  (o `ckpt.pt` do `pt-120m-wiki` é cópia do `pt-120m`; `runs/pt-120m` continua intocado).
 - **Avaliar (wiki-4)**: ppl no val da wiki + `eval_sft.py` nos dois runs contra os baselines
   acima. O critério é dizer se **663M tokens limpos** batem os **2,75B sujos** no português —
   e então decidir o híbrido com o OSCAR destilado do Passo 14. `PLAN.md` 14b tem os passos.

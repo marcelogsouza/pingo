@@ -129,6 +129,26 @@ decai a 3e-5: adaptação, não re-treino.
    `JobRunner` resolve. Depois disso, o `/treino` ganhou **barra de progresso com ETA**
    ([[Interface de treino]]).
 
+## Resultado do run (a) — do zero na wiki (2026-11-03)
+
+1.240 steps, 650.117.120 tokens (1,0 época), **6.071 s ≈ 1 h 41** a 101k tok/s com `--compile`.
+Val loss no val da wiki (`val-0000.bin`, 13,1M tokens), eval do próprio treino a cada 250 steps:
+
+| step | val loss | ppl |
+|---|---|---|
+| 250 | 4,631 | 102,6 |
+| 500 | 3,531 | 34,2 |
+| 750 | 3,058 | 21,3 |
+| **1.000** | **2,878** | **17,78** |
+
+O `final/` nasce quando o run conclui (`config.json` + `model.safetensors`).
+
+**A comparação que importa** (mesmo harness `train.evaluate`, bs 16 × ctx 2048): o modelo do
+OSCAR medido no val da wiki, no arranque do run (b), dá **3,0759 / 21,7**. O run do zero, com
+**650M tokens limpos** (4× menos), chega a **17,78** — 18% melhor no domínio da wiki. A
+hipótese do corpus limpo se sustenta: o problema do Pingo não era falta de tokens, era o
+OSCAR.
+
 ## Baseline cruzado (2026-11-03, CPU, antes de qualquer re-treino)
 
 O Pingo-120M do OSCAR (`runs/pt-120m/best.pt`, step 4.872) avaliado no MESMO harness
