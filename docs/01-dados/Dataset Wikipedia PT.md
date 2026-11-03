@@ -99,23 +99,35 @@ Dois experimentos valem a pena (mesmo vocab, `runs/pt-120m` intocado): **do zero
 Avaliação: ppl no `val-0000.bin` da wiki + a régua de sempre (`scripts/eval_sft.py`).
 **Exige GPU** — o Strata segura 31,4 GB dos 32,6; combinar antes de disparar.
 
-Disparados pelo `/treino` (fila de 1 job — um depois do outro). Preparado em 2026-11-03:
-`runs/pt-120m-wiki/ckpt.pt` é cópia do `runs/pt-120m/ckpt.pt` (step 5.248); o run (b) precisa de
-`max_steps` explícito porque o default é 1 época (1.240 < 5.248 ⇒ o `while step < max_steps`
-nem entraria):
+Disparados pelo `/treino` (fila de 1 job — um depois do outro), em 2026-11-03. O
+`runs/pt-120m-wiki/ckpt.pt` é **cópia** do `runs/pt-120m/ckpt.pt` (step 5.248); o run (b) precisa
+de `max_steps` explícito porque o default é 1 época (1.240 < 5.248 ⇒ o `while step < max_steps`
+nem entraria). **`compile: true` não é enfeite**: sem a flag o run cai de 102k para 56k tok/s.
 
 ```bash
-# (a) do zero: 1 época = 1.240 steps (650M ÷ 524.288 tokens-por-step), ~1,8 h
+# (a) do zero: 1 época = 1.240 steps (650M ÷ 524.288 tokens-por-step), ~1,7 h
 curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' \
-  -d '{"out":"wiki-120m","tokens_dir":"data/tokens/wiki-16k","epochs":1}'
-# (b) continua o OSCAR na wiki: 5.248 + 1.240 = 6.488 steps, ~1,8 h
+  -d '{"out":"wiki-120m","tokens_dir":"data/tokens/wiki-16k","epochs":1,"compile":true}'
+# (b) continua o OSCAR na wiki: 5.248 + 1.240 = 6.488 steps, ~1,7 h
 curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' \
-  -d '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488}'
+  -d '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488,"compile":true}'
 ```
 
 Os dois com a receita do run OSCAR (bs 16 × ctx 2048 × accum 16 = 524.288 tokens/step, lr 3e-4
 → min-lr 3e-5, warmup 400, wd 0.1). No (b), no passo 5.248 esse cronograma está em ~5,9e-5 e
 decai a 3e-5: adaptação, não re-treino.
+
+### O que deu errado no caminho (e ficou consertado)
+
+1. **Sem `--compile`**: 56k tok/s em vez de 102k (o ckpt do OSCAR tem `compile: True` — foi o
+   primeiro lugar onde olhar). Relançado.
+2. **A suíte de testes matou o run** no step 74: um teste chama `create_app()` sem `jobs=` e o
+   `JobRunner` default aponta para o `runs/jobs.json` real, cujo `__init__` caça órfãos por
+   SIGTERM. Duas travas agora (caça só no processo da webui + só em script do projeto) e os
+   testes de WebUI injetam um runner de tmp. Ver [[Gotchas]].
+3. **Log da UI vazio**: stdout do filho em pipe é block-buffered; `PYTHONUNBUFFERED=1` no
+   `JobRunner` resolve. Depois disso, o `/treino` ganhou **barra de progresso com ETA**
+   ([[Interface de treino]]).
 
 ## Baseline cruzado (2026-11-03, CPU, antes de qualquer re-treino)
 

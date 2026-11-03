@@ -27,41 +27,54 @@ treino-1…5, 2026-11-02): QA de dataset, tokenização (vocab por experimento `
 pré-treino/SFT com fila de 1 job, parar (SIGTERM→ckpt) e retomar, curva de loss e HW — o
 contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **232 testes verdes**.
 
-**Agora: acabou o caminho feliz.** O pipeline SFT inteiro rodou; o que sobra é **melhorar**:
+**Agora: acabou o caminho feliz.** O pipeline SFT rodou; o que sobra é **melhorar** — e o eixo
+atual é **corpus** (wiki limpa × OSCAR sujo). Comandos por etapa em
+`docs/09-referencia/Comandos e cheatsheet.md`; o modelo do projeto é o SFT de 1 época
+(`runs/sft-120m-ep1`, lr 5e-5) — **não** o `runs/sft-120m` de 3 épocas, que esquece o português
+(`docs/07-sft/Run do SFT-120M.md`). WebUI: `./scripts/webui.sh` → :8010 (LAN, sem auth).
 
-| Passo | Comando | Estado |
-|---|---|---|
-| dataset | `data/sft/final/` (26.479/1.581/1.455) | ✅ validado, sem vazamento |
-| SFT recomendado | `uv run python scripts/train_sft.py --epochs 1 --lr 5e-5 --min-lr 5e-6 --warmup-steps 40 --out runs/sft-120m-ep1` | ✅ 828 steps, 4 min 52 s |
-| avaliar | `uv run python scripts/eval_sft.py --model runs/sft-120m-ep1/final --n 200` | ✅ 24 s (sem `--judge`) |
-| WebUI | `./scripts/webui.sh` (Ctrl+C desliga) → `http://127.0.0.1:8010` ou `http://192.168.0.101:8010` (LAN, sem auth) | ✅ SFT + base, streaming; o `/lab` (curso ①–⑦) está fechado — `docs/07-sft/Modo didático.md`; o `/treino` (QA→tokens→pré-treino/SFT monitorado) está fechado — `docs/07-sft/Interface de treino.md` |
-
-- **Não use `runs/sft-120m/` (3 épocas, lr 1e-4) como o modelo do projeto**: F1 igual, mas
-  esquece o português (fator 6,94× contra 1,91×). Ficou como contraexemplo em
-  `docs/07-sft/Run do SFT-120M.md`.
-- O SFT **sem juiz de recusas** (o professor já estava derrubado): `recusa_ok` 0,455 e 0,545
-  nos dois runs — é a fraqueza mais clara e o alvo do SFT-5 (instruções gerais + texto cru).
 - **Corpus wiki pronto (2026-11-03)**: `data/wiki/pt.jsonl` (836.266 docs) + `pt-val.jsonl`
   (17.093) e os tokens em `data/tokens/wiki-16k/` — **650.248.473 train / 13.117.734 val**,
   vocab 16.384 congelado (embeddings e `runs/pt-120m` compatíveis). 1 época = **1.240 steps
-  ≈ 1,8 h** de GPU. Régua `--short-line-ratio 0.9` (0.6 do OSCAR mataria 67% da wiki); números
-  em `docs/01-dados/Dataset Wikipedia PT.md`. Baseline cruzado do modelo atual: ppl **13,75**
-  no val OSCAR vs **24,72** no val wiki (mesmo harness, CPU). **Falta só disparar o pré-treino** (do zero e/ou
-  `--resume` do pt-120m) — combinar antes: o Strata segura 31,4 GB dos 32,6.
-- Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (desenho fechado 2026-11-03;
-  juíz Qwen 3.6 35B rotula amostra, classificador destilado escoreia os 10,7M →
-  `data/oscar-qa/`; a corrente está em `docs/01-dados/QA do dataset com LLM.md`), SFT-5
-  (opcional, instruções gerais/replay de texto) e Passo 8 (**350M — suspenso**).
-- **Qualidade do OSCAR filtrado é pior do que parece** (medido 2026-11-03, amostra 3k docs
-  aprovados): ~45% têm raspa de web detectável por regex (boilerplate 34%, cookie 11%, JS,
-  wrapper EN) e os "limpos" incluem marketing/página-índice indetectável — por isso o
-  Passo 14 começa pelo pente-fino determinístico (qa-llm-0) e o juíz fica p/ substância.
+  ≈ 1,8 h** de GPU (com `--compile`; sem a flag cai para ~56k tok/s). Régua
+  `--short-line-ratio 0.9` (0.6 do OSCAR mataria 67% da wiki); números em
+  `docs/01-dados/Dataset Wikipedia PT.md`.
+- **Baseline cruzado (medido 2026-11-03, CPU, mesmo harness)**: o Pingo-120M do OSCAR tira ppl
+  **13,75** no val OSCAR e **24,72** no val wiki — estilo enciclopédico é fora de distribuição
+  para ele. É o número-alvo dos runs da wiki.
+
+### ⏳ Runs da wiki em andamento (retomar daqui)
+
+| run | o que é | estado em 2026-11-03 14:04 |
+|---|---|---|
+| **`runs/wiki-120m`** | do zero na wiki, 1.240 steps | **rodando** (step 200, 16,1%, ~90 min) |
+| `runs/pt-120m-wiki` | `--resume` do ckpt do OSCAR na wiki, `max_steps` **6488** (5.248 + 1.240) | engatilhado: dispara sozinho quando o (a) `concluir` |
+
+- **Ao voltar**: `curl -s localhost:8010/api/treino/status` → a barra do `/treino` diz
+  step/%/ETA (ou `tail -f runs/wiki-120m/log.jsonl`). Terminando o (a) com `concluido`, o (b)
+  entra na fila sozinho; **se o vigia morreu** (fechou o terminal), dispare à mão:
+  `curl -s -X POST localhost:8010/api/treino/pretreino -H 'Content-Type: application/json' -d
+  '{"out":"pt-120m-wiki","retomar":true,"tokens_dir":"data/tokens/wiki-16k","max_steps":6488,"compile":true}'`
+  (o `ckpt.pt` já está lá, cópia do `pt-120m`; `runs/pt-120m` continua intocado).
+- **Avaliar (wiki-4)**: ppl no val da wiki + `eval_sft.py` nos dois runs contra os baselines
+  acima. O critério é dizer se **663M tokens limpos** batem os **2,75B sujos** no português —
+  e então decidir o híbrido com o OSCAR destilado do Passo 14. `PLAN.md` 14b tem os passos.
+- Próximos, em `PLAN.md`: **Passo 14 — QA do OSCAR com LLM** (juíz Qwen 3.6 35B rotula amostra,
+  classificador CPU escoreia os 10,7M → `data/oscar-qa/`; desenho em
+  `docs/01-dados/QA do dataset com LLM.md`; ~45% do OSCAR aprovado tem raspa de web detectável,
+  então o passo começa pelo pente-fino qa-llm-0), SFT-5 (instruções gerais + texto cru; a
+  fraqueza atual é `recusa_ok` ~0,5) e Passo 8 (**350M — suspenso**).
 
 ## ▶️ Se você é uma NOVA sessão — nesta ordem
 
-1. `nvidia-smi`. Se ~31 GB ocupados, o **Strata** está de pé; o professor ocupa ~5 GB.
+1. `nvidia-smi` **e** `curl -s localhost:8010/api/treino/status`. Se houver job `rodando`, ele é
+   o run da wiki (seção acima): **não reinicie a webui** (o boot mata o job de propósito) e não
+   rode a suíte inteira enquanto ele treina (é CPU que o loader do treino precisa). Se ~31 GB
+   ocupados por outro processo, o **Strata** está de pé; o professor ocupa ~5 GB.
    **Avise o usuário antes de qualquer CUDA** — não derrube nada por conta própria.
-2. `uv run pytest -q` → **227 verdes** (CPU, ~85 s — os jobs de subprocess pesam).
+2. `uv run pytest -q` → **232 verdes** (CPU, ~85 s). Desde 2026-11-03 a suíte **não mata mais**
+   treino vivo (a caça ao órfão só roda no processo da webui) — mas os jobs de subprocess ainda
+   disputam CPU com o treino.
 3. `./scripts/webui.sh` (ou `uv run python scripts/webui.py`; o script derruba a instância
    anterior e desliga com Ctrl+C) e abra `http://127.0.0.1:8010` (ou o IP da LAN que ele
    imprime): se o chat responder, o modelo e a GPU estão de pé. (A porta 8000 desta máquina é
@@ -90,6 +103,12 @@ contrato mora em `docs/07-sft/Interface de treino.md`. Suíte: **232 testes verd
 - **JSONL já fatiado não se re-fatia.** `data/wiki/pt.jsonl` é o lado **train**; o val é o irmão
   `pt-val.jsonl`. O `prepare_tokens --input jsonl` detecta o irmão e **aborta** se o val sair
   vazio — não contorne a guarda nem passe `--val-pct` esperando que ele divida de novo.
+- **Não reinicie a webui com job rodando** (o boot do `JobRunner` caça órfãos e encerra o job —
+  é o preço de não ter treino fantasma na GPU) e **não dispare dois runs na GPU**: um escritor
+  por saída, uma VRAM. Conserto de backend não entra em produção durante um run; mudança de
+  **front** (`web/treino.html`) vale no reload da página.
+- **A receita do run é com `--compile`** (56k → 102k tok/s, medido 2026-11-03): bs 16 × ctx 2048
+  × accum 16 = 524.288 tokens/step, lr 3e-4 → 3e-5, warmup 400, wd 0.1.
 - **Treino disparado é só pelo `JobRunner`** (`pingo/jobs.py` — o `/treino` e nada mais):
   fila de 1 job, `runs/jobs.json`, caça ao órfão no boot, e com job rodando o chat **não
   carrega modelo** (a VRAM é uma só). `runs/pt-120m` e o backup são protegidos por nome (403)
